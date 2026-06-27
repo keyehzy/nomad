@@ -1,4 +1,4 @@
-include README.md VALIDATION.md LICENSE
+include README.md CHANGELOG.md VALIDATION.md LICENSE
 recursive-include python *.py
 include python/nomad/py.typed
 recursive-include tests *.py
