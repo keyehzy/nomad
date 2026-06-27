@@ -1,25 +1,10 @@
 # NOMAD — Normal-Ordered Matrix-free Algebra Device
 
-This repository contains a validated implementation of NOMAD as a multi-level
-compiler prototype for fermionic second-quantized algebra.
+NOMAD is a multi-level compiler prototype for fermionic second-quantized
+algebra, with a Python DSL as its source frontend.
 
-Scope implemented here:
-
-- Python embedded DSL: `index/indices`, `tensor`, `adag/create`, `a/destroy`, `sum_`.
-- NCIR-like term IR: weighted sums of tensor/operator/delta graph terms.
-- Fermionic CAR normal ordering: `a_i a†_j -> δ_ij - a†_j a_i`.
-- Delta elimination and symbolic equality constraints with summation-domain reduction.
-- Dummy-index canonicalization with deterministic `_0`, `_1`, ... names.
-- Same-kind fermion canonicalization and exact sign accounting.
-- Tensor antisymmetric-pair canonicalization.
-- U(1) particle-number pruning.
-- Finite-basis sum expansion and tensor evaluation.
-- Matrix-free determinant-space sparse backend over bitstring Slater determinants.
-- LaTeX and OpenFermion-source exports.
-
-NOMAD intentionally does **not** include a standalone `qoal` parser, bosonic CCR,
-full point-group irreps, HFB/Bogoliubov approximation passes, QIR, or native
-hardware routing. The Python DSL is the source frontend.
+See [CHANGELOG.md](CHANGELOG.md) for the implemented feature set and
+[TODO.md](TODO.md) for planned and out-of-scope work.
 
 ## Install/use from source
 
