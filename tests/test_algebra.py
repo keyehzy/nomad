@@ -38,6 +38,20 @@ def test_dummy_index_canonicalization_equates_alpha_renamed_sums():
     assert e1.simplify() == e2.simplify()
 
 
+def test_multiplication_freshens_independent_bound_indices():
+    p, q = indices("p q")
+    expr = sum_(p, adag(p)) * sum_(q, a(q))
+    assert text(expr) == "Σ__0,_1 a†(_0) a(_1)"
+    assert len(expr.terms[0].summed) == 2
+
+
+def test_independent_bound_indices_expand_as_cartesian_product():
+    p, q = indices("p q")
+    expr = sum_(p, adag(p)) * sum_(q, a(q))
+    out = expand_sums(expr, n_orbitals=2)
+    assert text(out) == "a†(0) a(0) + a†(0) a(1) + a†(1) a(0) + a†(1) a(1)"
+
+
 def test_tensor_antisymmetric_pair_canonicalization():
     p, q = indices("p q")
     g = tensor("g", [p, q], antisymmetric_pairs=[(p, q)])

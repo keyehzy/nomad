@@ -7,13 +7,17 @@ may rewrite one term into many terms.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
-from itertools import product
+from itertools import count, product
 from typing import Any
 
 Number = int | float | Fraction
+IndexKey = tuple[Any, ...]
+
+
+_BOUND_INDEX_UIDS = count()
 
 
 @dataclass(frozen=True)
@@ -23,18 +27,59 @@ class Index:
     NOMAD treats indices as labels over a finite spin-orbital basis.  Optional
     metadata fields are present so the frontend can carry conservation-law
     annotations without committing to the future full charge-vector system.
+    When an index is bound by ``sum_``, ``_uid`` carries its hidden hygienic
+    identity; ``name`` remains only the human-readable display label.
     """
 
     name: str
     spin_z2: int | None = None
     momentum: int | None = None
+    _uid: int | None = field(default=None, repr=False, compare=True)
 
     def __post_init__(self) -> None:
         if not self.name or not isinstance(self.name, str):
             raise ValueError("Index name must be a non-empty string")
+        if self._uid is not None and (
+            isinstance(self._uid, bool) or not isinstance(self._uid, int) or self._uid < 0
+        ):
+            raise ValueError("Index hidden identity must be a non-negative integer")
 
     def __repr__(self) -> str:  # pragma: no cover - same as str for REPLs
         return self.name
+
+
+def _coerce_summed_index(value: Index | str) -> Index:
+    if isinstance(value, Index):
+        return value
+    if isinstance(value, str):
+        return Index(value)
+    raise TypeError("Summed indices must be Index objects or legacy string names")
+
+
+def _optional_key(value: int | None) -> tuple[int, int]:
+    return (0, 0) if value is None else (1, int(value))
+
+
+def _index_metadata_key(index: Index) -> tuple[tuple[int, int], tuple[int, int]]:
+    return (_optional_key(index.spin_z2), _optional_key(index.momentum))
+
+
+def _index_identity(index: Index) -> IndexKey:
+    if index._uid is not None:
+        return ("bound", index._uid)
+    return ("free", index.name, _index_metadata_key(index))
+
+
+def _fresh_bound_index_like(
+    index: Index, *, name: str | None = None, avoid: Iterable[IndexKey] = ()
+) -> Index:
+    avoid_keys = set(avoid)
+    while True:
+        candidate = Index(
+            name or index.name, index.spin_z2, index.momentum, _uid=next(_BOUND_INDEX_UIDS)
+        )
+        if _index_identity(candidate) not in avoid_keys:
+            return candidate
 
 
 @dataclass(frozen=True)
@@ -64,10 +109,13 @@ def _mode(m: Mode | int | str) -> Mode:
     raise TypeError(f"Expected Index, Orbital, int, or str mode, got {type(m)!r}")
 
 
-def _mode_key(m: Mode) -> tuple[int, Any]:
+def _mode_key(m: Mode) -> tuple[Any, ...]:
     if isinstance(m, Orbital):
         return (0, m.value)
-    return (1, m.name)
+    ident = _index_identity(m)
+    if ident[0] == "bound":
+        return (1, 0, ident[1], _index_metadata_key(m))
+    return (1, 1, m.name, _index_metadata_key(m))
 
 
 def _mode_text(m: Mode) -> str:
@@ -178,19 +226,21 @@ class Term:
     tensors: tuple[TensorFactor, ...] = ()
     ops: tuple[Op, ...] = ()
     deltas: tuple[Delta, ...] = ()
-    summed: tuple[str, ...] = ()
+    summed: tuple[Index, ...] = ()
     metadata: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "coeff", _to_fraction(self.coeff))
-        object.__setattr__(self, "summed", tuple(dict.fromkeys(self.summed)))
+        object.__setattr__(
+            self, "summed", tuple(dict.fromkeys(_coerce_summed_index(s) for s in self.summed))
+        )
 
     def structural_key(self) -> tuple[Any, ...]:
         return (
             tuple(t.key() for t in self.tensors),
             tuple(d.key() for d in self.deltas),
             tuple(o.key() for o in self.ops),
-            self.summed,
+            tuple(_mode_key(s) for s in self.summed),
             self.metadata,
         )
 
@@ -200,13 +250,16 @@ class Term:
         )
 
     def mul(self, other: Term) -> Term:
+        left = _ensure_bound_index_identities(self)
+        right = _ensure_bound_index_identities(other)
+        right = _freshen_bound_indices(right, avoid=_bound_index_keys(left))
         return Term(
-            self.coeff * other.coeff,
-            self.tensors + other.tensors,
-            self.ops + other.ops,
-            self.deltas + other.deltas,
-            tuple(dict.fromkeys(self.summed + other.summed)),
-            tuple(sorted(self.metadata + other.metadata)),
+            left.coeff * right.coeff,
+            left.tensors + right.tensors,
+            left.ops + right.ops,
+            left.deltas + right.deltas,
+            tuple(dict.fromkeys(left.summed + right.summed)),
+            tuple(sorted(left.metadata + right.metadata)),
         )
 
 
@@ -306,6 +359,83 @@ def as_expr(value: Any) -> Expr:
     raise TypeError(f"Cannot convert {type(value)!r} to NOMAD Expr")
 
 
+def _substitute_mode(m: Mode, subst: Mapping[Any, Mode]) -> Mode:
+    if isinstance(m, Index):
+        ident = _index_identity(m)
+        if ident in subst:
+            return subst[ident]
+        if m in subst:
+            return subst[m]
+        # Compatibility for older internal callers that substituted free
+        # symbolic labels by name.  Bound indices must not be captured by a
+        # display-name substitution.
+        if m._uid is None and m.name in subst:
+            return subst[m.name]
+    return m
+
+
+def _replace_term_modes(
+    term: Term, subst: Mapping[Any, Mode], *, replace_summed: bool = True
+) -> Term:
+    tensors = tuple(
+        TensorFactor(t.symbol, tuple(_substitute_mode(p, subst) for p in t.ports))
+        for t in term.tensors
+    )
+    ops = tuple(Op(o.kind, _substitute_mode(o.mode, subst), o.statistics) for o in term.ops)
+    deltas = tuple(
+        Delta(_substitute_mode(d.left, subst), _substitute_mode(d.right, subst))
+        for d in term.deltas
+    )
+    if replace_summed:
+        summed = tuple(
+            s for s in (_substitute_mode(i, subst) for i in term.summed) if isinstance(s, Index)
+        )
+    else:
+        summed = term.summed
+    return Term(term.coeff, tensors, ops, deltas, summed, term.metadata)
+
+
+def _bound_index_keys(term: Term) -> set[IndexKey]:
+    return {_index_identity(i) for i in term.summed}
+
+
+def _ensure_bound_index_identities(term: Term) -> Term:
+    """Upgrade legacy name-bound summation entries to hygienic identities."""
+
+    subst: dict[IndexKey, Mode] = {}
+    occupied = _bound_index_keys(term)
+    for index in term.summed:
+        if index._uid is not None:
+            continue
+        key = _index_identity(index)
+        if key not in subst:
+            used = {_index_identity(i) for i in subst.values() if isinstance(i, Index)}
+            fresh = _fresh_bound_index_like(index, avoid=occupied | used)
+            subst[key] = fresh
+            occupied.add(_index_identity(fresh))
+    if not subst:
+        return term
+    return _replace_term_modes(term, subst)
+
+
+def _freshen_bound_indices(term: Term, *, avoid: Iterable[IndexKey] = ()) -> Term:
+    """Rename bound identities in ``term`` when they collide with ``avoid``."""
+
+    avoid_keys = set(avoid)
+    occupied = _bound_index_keys(term) | avoid_keys
+    subst: dict[IndexKey, Mode] = {}
+    for index in term.summed:
+        key = _index_identity(index)
+        if key not in avoid_keys or key in subst:
+            continue
+        fresh = _fresh_bound_index_like(index, avoid=occupied)
+        subst[key] = fresh
+        occupied.add(_index_identity(fresh))
+    if not subst:
+        return term
+    return _replace_term_modes(term, subst)
+
+
 def tensor(
     name: str,
     indices_or_rank: int | Sequence[Index] | None = None,
@@ -379,25 +509,33 @@ def sum_(*args: Any) -> Expr:
     if len(args) < 2:
         raise ValueError("sum_ expects one or more indices followed by an expression")
     *idxs, expr = args
-    expr = as_expr(expr)
-    names = []
+    expr = as_expr(expr).simplify()
+    bindings: dict[IndexKey, Mode] = {}
+    bound_indices: list[Index] = []
     for idx in idxs:
         if not isinstance(idx, Index):
             raise TypeError("sum_ indices must be Index objects")
-        names.append(idx.name)
-    return Expr(
-        tuple(
+        key = _index_identity(idx)
+        if key in bindings:
+            continue
+        bound = _fresh_bound_index_like(idx)
+        bindings[key] = bound
+        bound_indices.append(bound)
+
+    terms: list[Term] = []
+    for term in expr.terms:
+        rebound = _replace_term_modes(term, bindings, replace_summed=False)
+        terms.append(
             Term(
-                t.coeff,
-                t.tensors,
-                t.ops,
-                t.deltas,
-                tuple(dict.fromkeys(t.summed + tuple(names))),
-                t.metadata,
+                rebound.coeff,
+                rebound.tensors,
+                rebound.ops,
+                rebound.deltas,
+                tuple(dict.fromkeys(rebound.summed + tuple(bound_indices))),
+                rebound.metadata,
             )
-            for t in expr.terms
         )
-    ).simplify()
+    return Expr(tuple(terms)).simplify()
 
 
 # ---------------------------------------------------------------------------
@@ -434,21 +572,14 @@ class _UnionFind:
         return out
 
 
-def _node_for_mode(m: Mode) -> tuple[str, Any]:
+def _node_for_mode(m: Mode) -> tuple[Any, ...]:
     if isinstance(m, Orbital):
         return ("const", m.value)
-    return ("idx", m.name)
+    return ("idx", _index_identity(m), m)
 
 
-def _mode_from_node(node: tuple[str, Any]) -> Mode:
-    tag, val = node
-    return Orbital(int(val)) if tag == "const" else Index(str(val))
-
-
-def _substitute_mode(m: Mode, subst: Mapping[str, Mode]) -> Mode:
-    if isinstance(m, Index) and m.name in subst:
-        return subst[m.name]
-    return m
+def _mode_from_node(node: tuple[Any, ...]) -> Mode:
+    return Orbital(int(node[1])) if node[0] == "const" else node[2]
 
 
 def _canonicalize_delta_constraints(term: Term) -> Term | None:
@@ -462,28 +593,40 @@ def _canonicalize_delta_constraints(term: Term) -> Term | None:
         uf.add(b)
         uf.union(a, b)
 
-    summed = set(term.summed)
-    subst: dict[str, Mode] = {}
+    summed_by_key = {_index_identity(i): i for i in term.summed}
+    summed = set(summed_by_key)
+    subst: dict[IndexKey, Mode] = {}
     retained: list[Delta] = []
-    keep_summed = set(term.summed)
+    keep_summed = set(summed)
+    rep_mode: Mode
 
     for nodes in uf.groups().values():
-        idx_names = sorted(val for tag, val in nodes if tag == "idx")
-        consts = sorted({int(val) for tag, val in nodes if tag == "const"})
+        idx_by_key: dict[IndexKey, Index] = {}
+        consts = sorted({int(node[1]) for node in nodes if node[0] == "const"})
+        for node in nodes:
+            if node[0] == "idx":
+                idx_by_key.setdefault(node[1], node[2])
         if len(consts) > 1:
             return None
-        free = sorted(n for n in idx_names if n not in summed)
-        bound = sorted(n for n in idx_names if n in summed)
+
+        idx_items = tuple(idx_by_key.items())
+        free = sorted(
+            ((k, idx) for k, idx in idx_items if k not in summed),
+            key=lambda item: _mode_key(item[1]),
+        )
+        bound = sorted(
+            ((k, idx) for k, idx in idx_items if k in summed),
+            key=lambda item: _mode_key(item[1]),
+        )
 
         if free:
-            rep_name = free[0]
-            rep_mode: Mode = Index(rep_name)
-            for n in idx_names:
-                subst[n] = rep_mode
-                if n in bound:
-                    keep_summed.discard(n)
-            for other in free[1:]:
-                retained.append(Delta(rep_mode, Index(other)))
+            _rep_key, rep_mode = free[0]
+            for key, _idx in idx_items:
+                subst[key] = rep_mode
+                if key in summed:
+                    keep_summed.discard(key)
+            for _key, other in free[1:]:
+                retained.append(Delta(rep_mode, other))
             if consts:
                 retained.append(Delta(rep_mode, Orbital(consts[0])))
         else:
@@ -491,17 +634,16 @@ def _canonicalize_delta_constraints(term: Term) -> Term | None:
             # constants, so the delta can be consumed by reducing the domain.
             if consts:
                 rep_mode = Orbital(consts[0])
-                for n in bound:
-                    subst[n] = rep_mode
-                    keep_summed.discard(n)
+                for key, _idx in bound:
+                    subst[key] = rep_mode
+                    keep_summed.discard(key)
             elif bound:
-                rep_name = bound[0]
-                rep_mode = Index(rep_name)
-                keep_summed.add(rep_name)
-                for n in bound:
-                    subst[n] = rep_mode
-                    if n != rep_name:
-                        keep_summed.discard(n)
+                rep_key, rep_mode = bound[0]
+                keep_summed.add(rep_key)
+                for key, _idx in bound:
+                    subst[key] = rep_mode
+                    if key != rep_key:
+                        keep_summed.discard(key)
             # Pure constant equalities have already been checked and vanish.
 
     tensors = tuple(
@@ -518,7 +660,7 @@ def _canonicalize_delta_constraints(term: Term) -> Term | None:
         if _mode_key(d.left) != _mode_key(d.right):
             unique[d.key()] = d
     deltas = tuple(unique[k] for k in sorted(unique))
-    summed_ordered = tuple(s for s in term.summed if s in keep_summed)
+    summed_ordered = tuple(s for s in term.summed if _index_identity(s) in keep_summed)
     return Term(term.coeff, tensors, ops, deltas, summed_ordered, term.metadata)
 
 
@@ -578,14 +720,19 @@ def _canonicalize_tensors(term: Term) -> Term | None:
 
 
 def _rename_bound_dummies(term: Term) -> Term:
-    bound = set(term.summed)
+    bound = {_index_identity(i): i for i in term.summed}
     if not bound:
         return term
-    mapping: dict[str, Index] = {}
+    mapping: dict[IndexKey, Index] = {}
 
     def visit(m: Mode) -> None:
-        if isinstance(m, Index) and m.name in bound and m.name not in mapping:
-            mapping[m.name] = Index(f"_{len(mapping)}")
+        if isinstance(m, Index):
+            key = _index_identity(m)
+            if key in bound and key not in mapping:
+                source = bound[key]
+                mapping[key] = Index(
+                    f"_{len(mapping)}", source.spin_z2, source.momentum, _uid=len(mapping)
+                )
 
     for t in term.tensors:
         for p in t.ports:
@@ -596,24 +743,22 @@ def _rename_bound_dummies(term: Term) -> Term:
         visit(d.left)
         visit(d.right)
 
-    subst: dict[str, Mode] = dict(mapping)
-    tensors = tuple(
-        TensorFactor(t.symbol, tuple(_substitute_mode(p, subst) for p in t.ports))
-        for t in term.tensors
+    rebound = _replace_term_modes(term, mapping, replace_summed=False)
+    return Term(
+        rebound.coeff,
+        rebound.tensors,
+        rebound.ops,
+        rebound.deltas,
+        tuple(mapping.values()),
+        rebound.metadata,
     )
-    ops = tuple(Op(o.kind, _substitute_mode(o.mode, subst), o.statistics) for o in term.ops)
-    deltas = tuple(
-        Delta(_substitute_mode(d.left, subst), _substitute_mode(d.right, subst))
-        for d in term.deltas
-    )
-    summed = tuple(mapping[n].name for n in mapping)
-    return Term(term.coeff, tensors, ops, deltas, summed, term.metadata)
 
 
 def _canonicalize_term(term: Term) -> Term | None:
     if term.coeff == 0:
         return None
-    t = _canonicalize_delta_constraints(term)
+    prepared = _ensure_bound_index_identities(term)
+    t = _canonicalize_delta_constraints(prepared)
     if t is None:
         return None
     t = _canonicalize_op_runs(t)
@@ -741,10 +886,12 @@ def expand_sums(
     expr = as_expr(expr).simplify()
     out = Expr.zero()
     for term in expr.terms:
-        names = list(term.summed)
-        domains = [range(n_orbitals) for _ in names]
+        summed = list(term.summed)
+        domains = [range(n_orbitals) for _ in summed]
         for values in product(*domains):
-            subst = {name: Orbital(v) for name, v in zip(names, values, strict=True)}
+            subst = {
+                _index_identity(index): Orbital(v) for index, v in zip(summed, values, strict=True)
+            }
             tensors = []
             coeff = term.coeff
             for tf in term.tensors:
@@ -928,7 +1075,7 @@ def text(expr: Any) -> str:
     for term in expr.terms:
         factors = []
         if term.summed:
-            factors.append("Σ_" + ",".join(term.summed))
+            factors.append("Σ_" + ",".join(_mode_text(i) for i in term.summed))
         for d in term.deltas:
             factors.append(f"δ({_mode_text(d.left)},{_mode_text(d.right)})")
         for t in term.tensors:
@@ -956,7 +1103,7 @@ def latex(expr: Any) -> str:
     for term in expr.terms:
         factors = []
         if term.summed:
-            factors.append(r"\sum_{" + ",".join(term.summed) + "}")
+            factors.append(r"\sum_{" + ",".join(_mode_text(i) for i in term.summed) + "}")
         for d in term.deltas:
             factors.append(r"\delta_{" + _mode_text(d.left) + "," + _mode_text(d.right) + "}")
         for t in term.tensors:

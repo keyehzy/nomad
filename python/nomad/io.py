@@ -27,7 +27,7 @@ def dumps_json(expr: Any) -> str:
         terms.append(
             {
                 "coeff": [t.coeff.numerator, t.coeff.denominator],
-                "summed": list(t.summed),
+                "summed": [str(i) for i in t.summed],
                 "deltas": [[str(d.left), str(d.right)] for d in t.deltas],
                 "tensors": [
                     {"symbol": tf.symbol.name, "ports": [str(p) for p in tf.ports]}
