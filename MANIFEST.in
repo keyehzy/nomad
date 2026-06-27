@@ -1,0 +1,4 @@
+include README.md VALIDATION.md LICENSE Cargo.toml
+recursive-include crates *.rs *.toml
+recursive-include python *.py
+recursive-include tests *.py
