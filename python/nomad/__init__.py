@@ -1,4 +1,4 @@
-"""NOMAD V1: Normal-Ordered Matrix-free Algebra Device.
+"""NOMAD: Normal-Ordered Matrix-free Algebra Device.
 
 The public API is intentionally compact: build expressions with a Python DSL,
 normal-order them, export them, or compile finite-basis expressions into a

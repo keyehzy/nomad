@@ -1,6 +1,6 @@
-"""NOMAD V1 command-line entry point.
+"""NOMAD command-line entry point.
 
-The standalone qoal parser is deliberately not part of V1.  The CLI offers a
+The standalone qoal parser is deliberately not included.  The CLI offers a
 sanity-check demo and file-based normalization for Python snippets that assign
 an expression to a variable named ``expr``.
 """
@@ -22,7 +22,7 @@ def _demo_expr() -> Any:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="nomad", description="NOMAD V1 algebra compiler frontend")
+    parser = argparse.ArgumentParser(prog="nomad", description="NOMAD algebra compiler frontend")
     sub = parser.add_subparsers(dest="cmd")
 
     demo = sub.add_parser("demo", help="print a normalized one-body Hamiltonian demo")

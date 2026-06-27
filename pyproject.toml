@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nomad-qoal"
 version = "0.2.0"
-description = "NOMAD V1: Normal-Ordered Matrix-free Algebra Device"
+description = "NOMAD: Normal-Ordered Matrix-free Algebra Device"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT OR Apache-2.0" }
