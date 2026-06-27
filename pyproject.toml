@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nomad-qoal"
-version = "0.1.0"
-description = "NOMAD V1: Normal-Ordered Matrix-free Algebra Device"
+version = "0.2.0"
+description = "NOMAD: Normal-Ordered Matrix-free Algebra Device"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest", "numpy"]
+dev = ["ruff>=0.9", "mypy>=1.11"]
 
 [project.scripts]
 nomad = "nomad.cli:main"
@@ -27,7 +28,37 @@ package-dir = {"" = "python"}
 [tool.setuptools.packages.find]
 where = ["python"]
 
+[tool.setuptools.package-data]
+nomad = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["python"]
 addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["python", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "UP",  # pyupgrade
+  "C4",  # flake8-comprehensions
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `from nomad import *` is the documented DSL entry point (see README).
+"tests/*" = ["F403", "F405"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["python/nomad"]
+mypy_path = "python"
+explicit_package_bases = true
+strict = true

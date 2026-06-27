@@ -1,4 +1,4 @@
-"""NOMAD V1 Python frontend and reference runtime.
+"""NOMAD Python frontend and reference runtime.
 
 This module is intentionally small, deterministic, and dependency-light.  The
 data model is a weighted sum of NCIR/Wick term records, where normal ordering
@@ -7,26 +7,27 @@ may rewrite one term into many terms.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import product
-from typing import Any, Callable, Dict, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any
 
-Number = Union[int, float, Fraction]
+Number = int | float | Fraction
 
 
 @dataclass(frozen=True)
 class Index:
     """A symbolic orbital/spin-orbital index.
 
-    V1 treats indices as labels over a finite spin-orbital basis.  Optional
+    NOMAD treats indices as labels over a finite spin-orbital basis.  Optional
     metadata fields are present so the frontend can carry conservation-law
     annotations without committing to the future full charge-vector system.
     """
 
     name: str
-    spin_z2: Optional[int] = None
-    momentum: Optional[int] = None
+    spin_z2: int | None = None
+    momentum: int | None = None
 
     def __post_init__(self) -> None:
         if not self.name or not isinstance(self.name, str):
@@ -50,10 +51,10 @@ class Orbital:
         return str(self.value)
 
 
-Mode = Union[Index, Orbital]
+Mode = Index | Orbital
 
 
-def _mode(m: Union[Mode, int, str]) -> Mode:
+def _mode(m: Mode | int | str) -> Mode:
     if isinstance(m, (Index, Orbital)):
         return m
     if isinstance(m, int):
@@ -63,7 +64,7 @@ def _mode(m: Union[Mode, int, str]) -> Mode:
     raise TypeError(f"Expected Index, Orbital, int, or str mode, got {type(m)!r}")
 
 
-def _mode_key(m: Mode) -> Tuple[int, Any]:
+def _mode_key(m: Mode) -> tuple[int, Any]:
     if isinstance(m, Orbital):
         return (0, m.value)
     return (1, m.name)
@@ -73,21 +74,30 @@ def _mode_text(m: Mode) -> str:
     return str(m.value) if isinstance(m, Orbital) else m.name
 
 
-def indices(names: str) -> Union[Index, Tuple[Index, ...]]:
-    """Create one or more symbolic indices.
+def index(name: str) -> Index:
+    """Create a single symbolic index.
 
-    ``p, q = indices("p q")`` is the common form.  A single name returns a
-    single ``Index`` for convenience.
+    ``p = index("p")`` is the common form.  Use :func:`indices` for several.
+    """
+
+    (out,) = indices(name)
+    return out
+
+
+def indices(names: str) -> tuple[Index, ...]:
+    """Create a tuple of symbolic indices.
+
+    ``p, q = indices("p q")`` is the common form.  Use :func:`index` for a
+    single index.
     """
 
     parts = names.replace(",", " ").split()
     if not parts:
         raise ValueError("indices() needs at least one name")
-    out = tuple(Index(p) for p in parts)
-    return out[0] if len(out) == 1 else out
+    return tuple(Index(p) for p in parts)
 
 
-def spin_index(name: str, spin_z2: Optional[int] = None) -> Index:
+def spin_index(name: str, spin_z2: int | None = None) -> Index:
     """Create an index carrying optional ``2*S_z`` metadata."""
 
     return Index(name, spin_z2=spin_z2)
@@ -96,10 +106,10 @@ def spin_index(name: str, spin_z2: Optional[int] = None) -> Index:
 @dataclass(frozen=True)
 class TensorSymbol:
     name: str
-    rank: Optional[int] = None
-    declaration: Tuple[str, ...] = ()
+    rank: int | None = None
+    declaration: tuple[str, ...] = ()
     hermitian: bool = False
-    antisymmetric_pairs: Tuple[Tuple[int, int], ...] = ()
+    antisymmetric_pairs: tuple[tuple[int, int], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -112,7 +122,7 @@ class TensorSymbol:
             if self.rank is not None and not (0 <= a < self.rank and 0 <= b < self.rank):
                 raise ValueError("Antisymmetric pair references a port outside tensor rank")
 
-    def __getitem__(self, key: Union[Mode, int, str, Tuple[Union[Mode, int, str], ...]]) -> "Expr":
+    def __getitem__(self, key: Mode | int | str | tuple[Mode | int | str, ...]) -> Expr:
         if not isinstance(key, tuple):
             key = (key,)
         ports = tuple(_mode(k) for k in key)
@@ -124,9 +134,9 @@ class TensorSymbol:
 @dataclass(frozen=True)
 class TensorFactor:
     symbol: TensorSymbol
-    ports: Tuple[Mode, ...]
+    ports: tuple[Mode, ...]
 
-    def key(self) -> Tuple[Any, ...]:
+    def key(self) -> tuple[Any, ...]:
         return (
             self.symbol.name,
             self.symbol.rank,
@@ -146,9 +156,9 @@ class Op:
         if self.kind not in {"create", "destroy"}:
             raise ValueError("Op.kind must be 'create' or 'destroy'")
         if self.statistics != "fermion":
-            raise NotImplementedError("NOMAD V1 supports fermions only")
+            raise NotImplementedError("NOMAD supports fermions only")
 
-    def key(self) -> Tuple[Any, ...]:
+    def key(self) -> tuple[Any, ...]:
         return (self.kind, _mode_key(self.mode), self.statistics)
 
 
@@ -157,7 +167,7 @@ class Delta:
     left: Mode
     right: Mode
 
-    def key(self) -> Tuple[Any, Any]:
+    def key(self) -> tuple[Any, Any]:
         a, b = _mode_key(self.left), _mode_key(self.right)
         return (a, b) if a <= b else (b, a)
 
@@ -165,17 +175,17 @@ class Delta:
 @dataclass(frozen=True)
 class Term:
     coeff: Fraction = Fraction(1)
-    tensors: Tuple[TensorFactor, ...] = ()
-    ops: Tuple[Op, ...] = ()
-    deltas: Tuple[Delta, ...] = ()
-    summed: Tuple[str, ...] = ()
-    metadata: Tuple[Tuple[str, str], ...] = ()
+    tensors: tuple[TensorFactor, ...] = ()
+    ops: tuple[Op, ...] = ()
+    deltas: tuple[Delta, ...] = ()
+    summed: tuple[str, ...] = ()
+    metadata: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "coeff", _to_fraction(self.coeff))
         object.__setattr__(self, "summed", tuple(dict.fromkeys(self.summed)))
 
-    def structural_key(self) -> Tuple[Any, ...]:
+    def structural_key(self) -> tuple[Any, ...]:
         return (
             tuple(t.key() for t in self.tensors),
             tuple(d.key() for d in self.deltas),
@@ -184,10 +194,12 @@ class Term:
             self.metadata,
         )
 
-    def with_coeff(self, coeff: Number) -> "Term":
-        return Term(coeff, self.tensors, self.ops, self.deltas, self.summed, self.metadata)
+    def with_coeff(self, coeff: Number) -> Term:
+        return Term(
+            _to_fraction(coeff), self.tensors, self.ops, self.deltas, self.summed, self.metadata
+        )
 
-    def mul(self, other: "Term") -> "Term":
+    def mul(self, other: Term) -> Term:
         return Term(
             self.coeff * other.coeff,
             self.tensors + other.tensors,
@@ -202,22 +214,22 @@ class Term:
 class Expr:
     """A weighted sum of NCIR/Wick graph terms."""
 
-    terms: Tuple[Term, ...] = ()
+    terms: tuple[Term, ...] = ()
 
     @staticmethod
-    def zero() -> "Expr":
+    def zero() -> Expr:
         return Expr(())
 
     @staticmethod
-    def one() -> "Expr":
+    def one() -> Expr:
         return Expr((Term(),))
 
     @staticmethod
-    def from_term(term: Term) -> "Expr":
+    def from_term(term: Term) -> Expr:
         return Expr((term,)).simplify()
 
-    def simplify(self) -> "Expr":
-        buckets: Dict[Tuple[Any, ...], Term] = {}
+    def simplify(self) -> Expr:
+        buckets: dict[tuple[Any, ...], Term] = {}
         for term in self.terms:
             canon = _canonicalize_term(term)
             if canon is None or canon.coeff == 0:
@@ -235,29 +247,31 @@ class Expr:
         ordered = sorted(buckets.values(), key=lambda t: t.structural_key())
         return Expr(tuple(ordered))
 
-    def __add__(self, other: Any) -> "Expr":
+    def __add__(self, other: Any) -> Expr:
         other = as_expr(other)
         return Expr(self.terms + other.terms).simplify()
 
-    def __radd__(self, other: Any) -> "Expr":
+    def __radd__(self, other: Any) -> Expr:
         return as_expr(other).__add__(self)
 
-    def __neg__(self) -> "Expr":
+    def __neg__(self) -> Expr:
         return Expr(tuple(t.with_coeff(-t.coeff) for t in self.terms)).simplify()
 
-    def __sub__(self, other: Any) -> "Expr":
+    def __sub__(self, other: Any) -> Expr:
         return self + (-as_expr(other))
 
-    def __rsub__(self, other: Any) -> "Expr":
+    def __rsub__(self, other: Any) -> Expr:
         return as_expr(other) + (-self)
 
-    def __mul__(self, other: Any) -> "Expr":
+    def __mul__(self, other: Any) -> Expr:
         if isinstance(other, (int, Fraction, float)):
-            return Expr(tuple(t.with_coeff(t.coeff * _to_fraction(other)) for t in self.terms)).simplify()
+            return Expr(
+                tuple(t.with_coeff(t.coeff * _to_fraction(other)) for t in self.terms)
+            ).simplify()
         other = as_expr(other)
         return Expr(tuple(a.mul(b) for a in self.terms for b in other.terms)).simplify()
 
-    def __rmul__(self, other: Any) -> "Expr":
+    def __rmul__(self, other: Any) -> Expr:
         if isinstance(other, (int, Fraction, float)):
             return self * other
         return as_expr(other).__mul__(self)
@@ -294,11 +308,11 @@ def as_expr(value: Any) -> Expr:
 
 def tensor(
     name: str,
-    indices_or_rank: Optional[Union[int, Sequence[Index]]] = None,
+    indices_or_rank: int | Sequence[Index] | None = None,
     *,
-    rank: Optional[int] = None,
+    rank: int | None = None,
     hermitian: bool = False,
-    antisymmetric_pairs: Optional[Sequence[Tuple[Union[int, Index], Union[int, Index]]]] = None,
+    antisymmetric_pairs: Sequence[tuple[int | Index, int | Index]] | None = None,
 ) -> TensorSymbol:
     """Declare a symbolic tensor.
 
@@ -307,7 +321,7 @@ def tensor(
         ``g = tensor("g", 4, antisymmetric_pairs=[(0, 1), (2, 3)])``
     """
 
-    declaration: Tuple[str, ...] = ()
+    declaration: tuple[str, ...] = ()
     if isinstance(indices_or_rank, int):
         if rank is not None and rank != indices_or_rank:
             raise ValueError("rank provided twice with conflicting values")
@@ -318,7 +332,7 @@ def tensor(
             raise ValueError("rank does not match declaration length")
         rank = len(declaration)
 
-    pair_positions = []
+    pair_positions: list[tuple[int, int]] = []
     for pair in antisymmetric_pairs or ():
         a, b = pair
         if isinstance(a, Index):
@@ -333,16 +347,17 @@ def tensor(
             ib = declaration.index(b.name)
         else:
             ib = int(b)
-        pair_positions.append(tuple(sorted((ia, ib))))
+        lo, hi = sorted((ia, ib))
+        pair_positions.append((lo, hi))
 
     return TensorSymbol(name, rank, declaration, hermitian, tuple(sorted(set(pair_positions))))
 
 
-def create(mode: Union[Mode, int, str]) -> Expr:
+def create(mode: Mode | int | str) -> Expr:
     return Expr.from_term(Term(ops=(Op("create", _mode(mode)),)))
 
 
-def destroy(mode: Union[Mode, int, str]) -> Expr:
+def destroy(mode: Mode | int | str) -> Expr:
     return Expr.from_term(Term(ops=(Op("destroy", _mode(mode)),)))
 
 
@@ -350,14 +365,14 @@ adag = create
 a = destroy
 
 
-def delta(left: Union[Mode, int, str], right: Union[Mode, int, str]) -> Expr:
+def delta(left: Mode | int | str, right: Mode | int | str) -> Expr:
     return Expr.from_term(Term(deltas=(Delta(_mode(left), _mode(right)),)))
 
 
 def sum_(*args: Any) -> Expr:
     """Attach symbolic summation domains to an expression.
 
-    V1 does not expand sums until a finite backend asks for it.  Deltas can
+    NOMAD does not expand sums until a finite backend asks for it.  Deltas can
     reduce summation domains during canonicalization.
     """
 
@@ -370,7 +385,19 @@ def sum_(*args: Any) -> Expr:
         if not isinstance(idx, Index):
             raise TypeError("sum_ indices must be Index objects")
         names.append(idx.name)
-    return Expr(tuple(Term(t.coeff, t.tensors, t.ops, t.deltas, tuple(dict.fromkeys(t.summed + tuple(names))), t.metadata) for t in expr.terms)).simplify()
+    return Expr(
+        tuple(
+            Term(
+                t.coeff,
+                t.tensors,
+                t.ops,
+                t.deltas,
+                tuple(dict.fromkeys(t.summed + tuple(names))),
+                t.metadata,
+            )
+            for t in expr.terms
+        )
+    ).simplify()
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +407,7 @@ def sum_(*args: Any) -> Expr:
 
 class _UnionFind:
     def __init__(self) -> None:
-        self.parent: Dict[Any, Any] = {}
+        self.parent: dict[Any, Any] = {}
 
     def add(self, x: Any) -> None:
         self.parent.setdefault(x, x)
@@ -400,20 +427,20 @@ class _UnionFind:
             else:
                 self.parent[ra] = rb
 
-    def groups(self) -> Dict[Any, list[Any]]:
-        out: Dict[Any, list[Any]] = {}
+    def groups(self) -> dict[Any, list[Any]]:
+        out: dict[Any, list[Any]] = {}
         for x in list(self.parent):
             out.setdefault(self.find(x), []).append(x)
         return out
 
 
-def _node_for_mode(m: Mode) -> Tuple[str, Any]:
+def _node_for_mode(m: Mode) -> tuple[str, Any]:
     if isinstance(m, Orbital):
         return ("const", m.value)
     return ("idx", m.name)
 
 
-def _mode_from_node(node: Tuple[str, Any]) -> Mode:
+def _mode_from_node(node: tuple[str, Any]) -> Mode:
     tag, val = node
     return Orbital(int(val)) if tag == "const" else Index(str(val))
 
@@ -424,7 +451,7 @@ def _substitute_mode(m: Mode, subst: Mapping[str, Mode]) -> Mode:
     return m
 
 
-def _canonicalize_delta_constraints(term: Term) -> Optional[Term]:
+def _canonicalize_delta_constraints(term: Term) -> Term | None:
     if not term.deltas:
         return term
 
@@ -436,13 +463,13 @@ def _canonicalize_delta_constraints(term: Term) -> Optional[Term]:
         uf.union(a, b)
 
     summed = set(term.summed)
-    subst: Dict[str, Mode] = {}
+    subst: dict[str, Mode] = {}
     retained: list[Delta] = []
     keep_summed = set(term.summed)
 
     for nodes in uf.groups().values():
         idx_names = sorted(val for tag, val in nodes if tag == "idx")
-        consts = sorted(set(int(val) for tag, val in nodes if tag == "const"))
+        consts = sorted({int(val) for tag, val in nodes if tag == "const"})
         if len(consts) > 1:
             return None
         free = sorted(n for n in idx_names if n not in summed)
@@ -477,11 +504,14 @@ def _canonicalize_delta_constraints(term: Term) -> Optional[Term]:
                         keep_summed.discard(n)
             # Pure constant equalities have already been checked and vanish.
 
-    tensors = tuple(TensorFactor(t.symbol, tuple(_substitute_mode(p, subst) for p in t.ports)) for t in term.tensors)
+    tensors = tuple(
+        TensorFactor(t.symbol, tuple(_substitute_mode(p, subst) for p in t.ports))
+        for t in term.tensors
+    )
     ops = tuple(Op(o.kind, _substitute_mode(o.mode, subst), o.statistics) for o in term.ops)
 
     # Deduplicate retained free-index constraints canonically.
-    unique: Dict[Tuple[Any, Any], Delta] = {}
+    unique: dict[tuple[Any, Any], Delta] = {}
     for d in retained:
         if _mode_key(d.right) < _mode_key(d.left):
             d = Delta(d.right, d.left)
@@ -492,7 +522,7 @@ def _canonicalize_delta_constraints(term: Term) -> Optional[Term]:
     return Term(term.coeff, tensors, ops, deltas, summed_ordered, term.metadata)
 
 
-def _inversion_parity(keys: Sequence[Tuple[Any, ...]]) -> int:
+def _inversion_parity(keys: Sequence[tuple[Any, ...]]) -> int:
     inv = 0
     for i in range(len(keys)):
         for j in range(i + 1, len(keys)):
@@ -501,7 +531,7 @@ def _inversion_parity(keys: Sequence[Tuple[Any, ...]]) -> int:
     return inv % 2
 
 
-def _canonicalize_op_runs(term: Term) -> Optional[Term]:
+def _canonicalize_op_runs(term: Term) -> Term | None:
     ops = list(term.ops)
     coeff = term.coeff
     out: list[Op] = []
@@ -521,7 +551,7 @@ def _canonicalize_op_runs(term: Term) -> Optional[Term]:
     return Term(coeff, term.tensors, tuple(out), term.deltas, term.summed, term.metadata)
 
 
-def _canonicalize_tensor_factor(factor: TensorFactor) -> Optional[Tuple[Fraction, TensorFactor]]:
+def _canonicalize_tensor_factor(factor: TensorFactor) -> tuple[Fraction, TensorFactor] | None:
     coeff = Fraction(1)
     ports = list(factor.ports)
     for a, b in factor.symbol.antisymmetric_pairs:
@@ -533,7 +563,7 @@ def _canonicalize_tensor_factor(factor: TensorFactor) -> Optional[Tuple[Fraction
     return coeff, TensorFactor(factor.symbol, tuple(ports))
 
 
-def _canonicalize_tensors(term: Term) -> Optional[Term]:
+def _canonicalize_tensors(term: Term) -> Term | None:
     coeff = term.coeff
     factors = []
     for f in term.tensors:
@@ -551,7 +581,7 @@ def _rename_bound_dummies(term: Term) -> Term:
     bound = set(term.summed)
     if not bound:
         return term
-    mapping: Dict[str, Index] = {}
+    mapping: dict[str, Index] = {}
 
     def visit(m: Mode) -> None:
         if isinstance(m, Index) and m.name in bound and m.name not in mapping:
@@ -566,15 +596,21 @@ def _rename_bound_dummies(term: Term) -> Term:
         visit(d.left)
         visit(d.right)
 
-    subst: Dict[str, Mode] = {old: new for old, new in mapping.items()}
-    tensors = tuple(TensorFactor(t.symbol, tuple(_substitute_mode(p, subst) for p in t.ports)) for t in term.tensors)
+    subst: dict[str, Mode] = dict(mapping)
+    tensors = tuple(
+        TensorFactor(t.symbol, tuple(_substitute_mode(p, subst) for p in t.ports))
+        for t in term.tensors
+    )
     ops = tuple(Op(o.kind, _substitute_mode(o.mode, subst), o.statistics) for o in term.ops)
-    deltas = tuple(Delta(_substitute_mode(d.left, subst), _substitute_mode(d.right, subst)) for d in term.deltas)
+    deltas = tuple(
+        Delta(_substitute_mode(d.left, subst), _substitute_mode(d.right, subst))
+        for d in term.deltas
+    )
     summed = tuple(mapping[n].name for n in mapping)
     return Term(term.coeff, tensors, ops, deltas, summed, term.metadata)
 
 
-def _canonicalize_term(term: Term) -> Optional[Term]:
+def _canonicalize_term(term: Term) -> Term | None:
     if term.coeff == 0:
         return None
     t = _canonicalize_delta_constraints(term)
@@ -606,7 +642,7 @@ def normal_order(expr: Any) -> Expr:
     """
 
     expr = as_expr(expr)
-    memo: Dict[Tuple[Any, ...], Expr] = {}
+    memo: dict[tuple[Any, ...], Expr] = {}
 
     def rec(term: Term) -> Expr:
         key = (term.coeff, term.structural_key())
@@ -651,7 +687,7 @@ def particle_delta(term: Term) -> int:
 
 
 def prune_by_charge(expr: Any, *, delta_n: int = 0) -> Expr:
-    """Compile-time U(1) particle-number pruning for V1."""
+    """Compile-time U(1) particle-number pruning."""
 
     expr = as_expr(expr).simplify()
     return Expr(tuple(t for t in expr.terms if particle_delta(t) == delta_n)).simplify()
@@ -676,7 +712,7 @@ def _all_indices_in_mode_order(term: Term) -> Iterator[str]:
                 yield p.name
 
 
-def _eval_tensor_value(values: Any, ports: Tuple[Mode, ...]) -> Fraction:
+def _eval_tensor_value(values: Any, ports: tuple[Mode, ...]) -> Fraction:
     idx = tuple(p.value for p in ports if isinstance(p, Orbital))
     if len(idx) != len(ports):
         raise ValueError("Cannot evaluate tensor with symbolic ports")
@@ -691,7 +727,9 @@ def _eval_tensor_value(values: Any, ports: Tuple[Mode, ...]) -> Fraction:
     return _to_fraction(float(val) if hasattr(val, "item") else val)
 
 
-def expand_sums(expr: Any, *, n_orbitals: int, tensor_values: Optional[Mapping[str, Any]] = None) -> Expr:
+def expand_sums(
+    expr: Any, *, n_orbitals: int, tensor_values: Mapping[str, Any] | None = None
+) -> Expr:
     """Expand symbolic sums over a finite spin-orbital basis.
 
     Tensor factors with concrete ports are evaluated when their symbol appears
@@ -706,7 +744,7 @@ def expand_sums(expr: Any, *, n_orbitals: int, tensor_values: Optional[Mapping[s
         names = list(term.summed)
         domains = [range(n_orbitals) for _ in names]
         for values in product(*domains):
-            subst = {name: Orbital(v) for name, v in zip(names, values)}
+            subst = {name: Orbital(v) for name, v in zip(names, values, strict=True)}
             tensors = []
             coeff = term.coeff
             for tf in term.tensors:
@@ -716,7 +754,10 @@ def expand_sums(expr: Any, *, n_orbitals: int, tensor_values: Optional[Mapping[s
                 else:
                     tensors.append(TensorFactor(tf.symbol, ports))
             ops = tuple(Op(o.kind, _substitute_mode(o.mode, subst), o.statistics) for o in term.ops)
-            deltas = tuple(Delta(_substitute_mode(d.left, subst), _substitute_mode(d.right, subst)) for d in term.deltas)
+            deltas = tuple(
+                Delta(_substitute_mode(d.left, subst), _substitute_mode(d.right, subst))
+                for d in term.deltas
+            )
             out += Expr.from_term(Term(coeff, tuple(tensors), ops, deltas, (), term.metadata))
     return out.simplify()
 
@@ -734,7 +775,7 @@ def _require_finite_numeric(expr: Expr) -> None:
                 raise ValueError("Sparse/export backends require concrete orbital labels")
 
 
-def apply_ops_to_det(det: int, ops: Sequence[Op]) -> Optional[Tuple[int, int]]:
+def apply_ops_to_det(det: int, ops: Sequence[Op]) -> tuple[int, int] | None:
     """Apply an operator word to a determinant bitstring.
 
     Operators are stored left-to-right, so application to ``|D>`` proceeds from
@@ -762,7 +803,9 @@ def apply_ops_to_det(det: int, ops: Sequence[Op]) -> Optional[Tuple[int, int]]:
     return d, sign
 
 
-def generate_basis(n_orbitals: int, sector: Optional[Mapping[str, int]] = None, spin_z2: Optional[Sequence[int]] = None) -> Tuple[int, ...]:
+def generate_basis(
+    n_orbitals: int, sector: Mapping[str, int] | None = None, spin_z2: Sequence[int] | None = None
+) -> tuple[int, ...]:
     sector = sector or {}
     required_n = sector.get("N")
     required_sz2 = sector.get("Sz2", sector.get("Sz"))
@@ -785,8 +828,8 @@ class SparseOperator:
     expr: Expr
     n_orbitals: int
     sector: Mapping[str, int] = field(default_factory=dict)
-    basis: Tuple[int, ...] = field(init=False)
-    index_of: Dict[int, int] = field(init=False)
+    basis: tuple[int, ...] = field(init=False)
+    index_of: dict[int, int] = field(init=False)
 
     def __post_init__(self) -> None:
         self.expr = self.expr.simplify()
@@ -795,13 +838,15 @@ class SparseOperator:
         self.index_of = {d: i for i, d in enumerate(self.basis)}
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         n = len(self.basis)
         return (n, n)
 
     def matvec(self, x: Sequence[Number]) -> list[float]:
         if len(x) != len(self.basis):
-            raise ValueError(f"Input vector length {len(x)} does not match basis size {len(self.basis)}")
+            raise ValueError(
+                f"Input vector length {len(x)} does not match basis size {len(self.basis)}"
+            )
         y = [0.0 for _ in self.basis]
         for col, det in enumerate(self.basis):
             amp = float(x[col])
@@ -833,12 +878,12 @@ def compile(  # noqa: A001 - public API intentionally named compile
     expr: Any,
     *,
     target: str = "sparse",
-    n_orbitals: Optional[int] = None,
-    sector: Optional[Mapping[str, int]] = None,
-    tensor_values: Optional[Mapping[str, Any]] = None,
+    n_orbitals: int | None = None,
+    sector: Mapping[str, int] | None = None,
+    tensor_values: Mapping[str, Any] | None = None,
 ) -> Any:
     if target != "sparse":
-        raise NotImplementedError("NOMAD V1 executable backend is target='sparse'")
+        raise NotImplementedError("NOMAD executable backend is target='sparse'")
     if n_orbitals is None:
         raise ValueError("n_orbitals is required for sparse compilation")
     lowered = expand_sums(normal_order(expr), n_orbitals=n_orbitals, tensor_values=tensor_values)
@@ -852,8 +897,14 @@ def openfermion(expr: Any) -> str:
     _require_finite_numeric(expr)
     lines = ["from openfermion import FermionOperator", "op = FermionOperator.zero()"]
     for term in expr.terms:
-        word = " ".join(f"{op.mode.value}^" if op.kind == "create" else f"{op.mode.value}" for op in term.ops)  # type: ignore[union-attr]
-        coeff = str(term.coeff.numerator) if term.coeff.denominator == 1 else f"({term.coeff.numerator}/{term.coeff.denominator})"
+        word = " ".join(
+            f"{op.mode.value}^" if op.kind == "create" else f"{op.mode.value}" for op in term.ops
+        )
+        coeff = (
+            str(term.coeff.numerator)
+            if term.coeff.denominator == 1
+            else f"({term.coeff.numerator}/{term.coeff.denominator})"
+        )
         lines.append(f"op += FermionOperator({word!r}, {coeff})")
     return "\n".join(lines)
 
@@ -890,7 +941,9 @@ def text(expr: Any) -> str:
         elif term.coeff == -1 and factors:
             parts.append("-" + body)
         else:
-            parts.append(f"{_format_coeff(term.coeff)}*{body}" if factors else _format_coeff(term.coeff))
+            parts.append(
+                f"{_format_coeff(term.coeff)}*{body}" if factors else _format_coeff(term.coeff)
+            )
     out = " + ".join(parts)
     return out.replace("+ -", "- ")
 

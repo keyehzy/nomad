@@ -1,9 +1,12 @@
-"""NOMAD V1: Normal-Ordered Matrix-free Algebra Device.
+"""NOMAD: Normal-Ordered Matrix-free Algebra Device.
 
 The public API is intentionally compact: build expressions with a Python DSL,
 normal-order them, export them, or compile finite-basis expressions into a
 matrix-free determinant-space operator.
 """
+
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 from .core import (
     Delta,
@@ -24,6 +27,7 @@ from .core import (
     destroy,
     expand_sums,
     generate_basis,
+    index,
     indices,
     latex,
     normal_order,
@@ -55,6 +59,7 @@ __all__ = [
     "destroy",
     "expand_sums",
     "generate_basis",
+    "index",
     "indices",
     "latex",
     "normal_order",
@@ -67,4 +72,7 @@ __all__ = [
     "text",
 ]
 
-__version__ = "0.1.0-v1"
+try:
+    __version__ = _pkg_version("nomad-qoal")
+except PackageNotFoundError:  # pragma: no cover - running from an uninstalled source tree
+    __version__ = "0.0.0+unknown"
