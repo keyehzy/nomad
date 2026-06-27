@@ -1,4 +1,4 @@
-"""Small serialization/export helpers for NOMAD V1."""
+"""Small serialization/export helpers for NOMAD."""
 
 from __future__ import annotations
 

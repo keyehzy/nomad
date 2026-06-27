@@ -1,4 +1,4 @@
-"""NOMAD V1 Python frontend and reference runtime.
+"""NOMAD Python frontend and reference runtime.
 
 This module is intentionally small, deterministic, and dependency-light.  The
 data model is a weighted sum of NCIR/Wick term records, where normal ordering
@@ -20,7 +20,7 @@ Number = int | float | Fraction
 class Index:
     """A symbolic orbital/spin-orbital index.
 
-    V1 treats indices as labels over a finite spin-orbital basis.  Optional
+    NOMAD treats indices as labels over a finite spin-orbital basis.  Optional
     metadata fields are present so the frontend can carry conservation-law
     annotations without committing to the future full charge-vector system.
     """
@@ -156,7 +156,7 @@ class Op:
         if self.kind not in {"create", "destroy"}:
             raise ValueError("Op.kind must be 'create' or 'destroy'")
         if self.statistics != "fermion":
-            raise NotImplementedError("NOMAD V1 supports fermions only")
+            raise NotImplementedError("NOMAD supports fermions only")
 
     def key(self) -> tuple[Any, ...]:
         return (self.kind, _mode_key(self.mode), self.statistics)
@@ -372,7 +372,7 @@ def delta(left: Mode | int | str, right: Mode | int | str) -> Expr:
 def sum_(*args: Any) -> Expr:
     """Attach symbolic summation domains to an expression.
 
-    V1 does not expand sums until a finite backend asks for it.  Deltas can
+    NOMAD does not expand sums until a finite backend asks for it.  Deltas can
     reduce summation domains during canonicalization.
     """
 
@@ -687,7 +687,7 @@ def particle_delta(term: Term) -> int:
 
 
 def prune_by_charge(expr: Any, *, delta_n: int = 0) -> Expr:
-    """Compile-time U(1) particle-number pruning for V1."""
+    """Compile-time U(1) particle-number pruning."""
 
     expr = as_expr(expr).simplify()
     return Expr(tuple(t for t in expr.terms if particle_delta(t) == delta_n)).simplify()
@@ -883,7 +883,7 @@ def compile(  # noqa: A001 - public API intentionally named compile
     tensor_values: Mapping[str, Any] | None = None,
 ) -> Any:
     if target != "sparse":
-        raise NotImplementedError("NOMAD V1 executable backend is target='sparse'")
+        raise NotImplementedError("NOMAD executable backend is target='sparse'")
     if n_orbitals is None:
         raise ValueError("n_orbitals is required for sparse compilation")
     lowered = expand_sums(normal_order(expr), n_orbitals=n_orbitals, tensor_values=tensor_values)

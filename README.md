@@ -1,9 +1,9 @@
-# NOMAD V1 — Normal-Ordered Matrix-free Algebra Device
+# NOMAD — Normal-Ordered Matrix-free Algebra Device
 
-This repository contains a validated V1 implementation of NOMAD as a multi-level
+This repository contains a validated implementation of NOMAD as a multi-level
 compiler prototype for fermionic second-quantized algebra.
 
-V1 scope implemented here:
+Scope implemented here:
 
 - Python embedded DSL: `index/indices`, `tensor`, `adag/create`, `a/destroy`, `sum_`.
 - NCIR-like term IR: weighted sums of tensor/operator/delta graph terms.
@@ -17,9 +17,9 @@ V1 scope implemented here:
 - Matrix-free determinant-space sparse backend over bitstring Slater determinants.
 - LaTeX and OpenFermion-source exports.
 
-V1 intentionally does **not** include a standalone `qoal` parser, bosonic CCR,
+NOMAD intentionally does **not** include a standalone `qoal` parser, bosonic CCR,
 full point-group irreps, HFB/Bogoliubov approximation passes, QIR, or native
-hardware routing. The Python DSL is the source frontend for V1.
+hardware routing. The Python DSL is the source frontend.
 
 ## Install/use from source
 
