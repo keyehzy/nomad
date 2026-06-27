@@ -12,7 +12,6 @@ license = { text = "MIT" }
 authors = [{ name = "NOMAD contributors" }]
 classifiers = [
   "Programming Language :: Python :: 3",
-  "Programming Language :: Rust",
   "Topic :: Scientific/Engineering :: Physics",
 ]
 

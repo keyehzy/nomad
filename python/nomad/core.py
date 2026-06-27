@@ -1,10 +1,8 @@
 """NOMAD V1 Python frontend and reference runtime.
 
-This module is intentionally small, deterministic, and dependency-light.  It is
-also the executable fallback for environments where the Rust/PyO3 extension has
-not been built yet.  The data model mirrors the Rust core in ``crates``:
-weighted sums of NCIR/Wick term records, where normal ordering may rewrite one
-term into many terms.
+This module is intentionally small, deterministic, and dependency-light.  The
+data model is a weighted sum of NCIR/Wick term records, where normal ordering
+may rewrite one term into many terms.
 """
 
 from __future__ import annotations

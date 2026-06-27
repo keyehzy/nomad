@@ -9,8 +9,3 @@ $ cd /mnt/data/nomad-v1 && PYTHONPATH=python python -m pytest -q tests
 
 $ cd /mnt/data/nomad-v1 && PYTHONPATH=python python -m nomad.cli demo --emit latex
 \sum_{_0,_1} h_{_0,_1} a^\dagger_{_0} a_{_1}
-
-Rust validation note:
-`rustc` and `cargo` were not installed in the delivery container, so Rust unit
-tests could not be executed here. The Rust workspace and unit tests are included
-under crates/ and can be validated with `cargo test --workspace` on a Rust host.

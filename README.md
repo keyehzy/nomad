@@ -16,7 +16,6 @@ V1 scope implemented here:
 - Finite-basis sum expansion and tensor evaluation.
 - Matrix-free determinant-space sparse backend over bitstring Slater determinants.
 - LaTeX and OpenFermion-source exports.
-- Rust core source layout for deterministic algebra and determinant kernels.
 
 V1 intentionally does **not** include a standalone `qoal` parser, bosonic CCR,
 full point-group irreps, HFB/Bogoliubov approximation passes, QIR, or native
@@ -25,17 +24,14 @@ hardware routing. The Python DSL is the source frontend for V1.
 ## Install/use from source
 
 ```bash
-python -m pip install -e .
+python -m pip install -e ".[test]"
 python -m pytest
 nomad demo --emit latex
 ```
 
-The executable frontend does not require Rust. The Rust core source is under
-`crates/`; build it with a Rust toolchain using:
-
-```bash
-cargo test --workspace
-```
+This is a pure-Python package with no compiled extensions; installing requires
+only a Python toolchain. The `[test]` extra pulls in `pytest` and `numpy` for the
+test suite.
 
 ## Example
 
@@ -78,6 +74,5 @@ normal ordering → delta elimination → dummy-index canonicalization
 LaTeX / OpenFermion-source / matrix-free determinant backend
 ```
 
-The Rust crate mirrors the core term representation and algorithms so it can be
-bound through PyO3 in a later performance-oriented build. The included Python
-runtime is kept as a reference implementation for validation and portability.
+The reference runtime in `python/nomad/` is a small, deterministic,
+dependency-light implementation of the core term algebra and determinant kernels.
