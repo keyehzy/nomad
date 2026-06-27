@@ -19,8 +19,3 @@ The tests cover:
 - Matrix-free sparse backend against an explicitly generated dense matrix.
 - Finite tensor-valued sum expansion.
 - LaTeX and OpenFermion-source exports.
-
-The container used for this artifact did not include `rustc`/`cargo`, so the Rust
-crate source could not be compiled in-place. The Rust code is included in the
-workspace layout and has unit tests for the same normal-ordering and determinant
-kernels; run `cargo test --workspace` on a machine with Rust installed.

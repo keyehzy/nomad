@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "crates/nomad-core",
-    "crates/nomad-python",
-]
-resolver = "2"

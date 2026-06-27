@@ -1,4 +1,3 @@
-include README.md VALIDATION.md LICENSE Cargo.toml
-recursive-include crates *.rs *.toml
+include README.md VALIDATION.md LICENSE
 recursive-include python *.py
 recursive-include tests *.py
