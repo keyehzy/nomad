@@ -16,6 +16,9 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Physics",
 ]
 
+[project.optional-dependencies]
+test = ["pytest", "numpy"]
+
 [project.scripts]
 nomad = "nomad.cli:main"
 
