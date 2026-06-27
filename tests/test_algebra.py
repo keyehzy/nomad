@@ -1,3 +1,5 @@
+import pytest
+
 from nomad import *
 
 
@@ -43,7 +45,24 @@ def test_tensor_antisymmetric_pair_canonicalization():
 
 
 def test_particle_number_pruning():
-    p = indices("p")
+    p = index("p")
     expr = adag(p) * a(p) + adag(p) + a(p)
     pruned = prune_by_charge(expr, delta_n=0)
     assert text(pruned) == "a†(p) a(p)"
+
+
+def test_index_and_indices_constructors():
+    p = index("p")
+    assert isinstance(p, Index)
+
+    pair = indices("p q")
+    assert isinstance(pair, tuple)
+    assert [m.name for m in pair] == ["p", "q"]
+
+    # indices() always returns a tuple, even for a single name
+    (only,) = indices("p")
+    assert only.name == "p"
+
+    # index() rejects multiple names
+    with pytest.raises(ValueError):
+        index("p q")

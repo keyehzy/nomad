@@ -5,7 +5,7 @@ compiler prototype for fermionic second-quantized algebra.
 
 V1 scope implemented here:
 
-- Python embedded DSL: `indices`, `tensor`, `adag/create`, `a/destroy`, `sum_`.
+- Python embedded DSL: `index/indices`, `tensor`, `adag/create`, `a/destroy`, `sum_`.
 - NCIR-like term IR: weighted sums of tensor/operator/delta graph terms.
 - Fermionic CAR normal ordering: `a_i a†_j -> δ_ij - a†_j a_i`.
 - Delta elimination and symbolic equality constraints with summation-domain reduction.

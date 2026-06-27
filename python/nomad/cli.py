@@ -16,9 +16,7 @@ from . import a, adag, indices, latex, normal_order, sum_, tensor, text
 
 
 def _demo_expr() -> Any:
-    modes = indices("p q")
-    assert isinstance(modes, tuple)
-    p, q = modes
+    p, q = indices("p q")
     h = tensor("h", [p, q], hermitian=True)
     return sum_(p, q, h[p, q] * adag(p) * a(q))
 
