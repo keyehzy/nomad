@@ -186,7 +186,9 @@ class Term:
         )
 
     def with_coeff(self, coeff: Number) -> Term:
-        return Term(coeff, self.tensors, self.ops, self.deltas, self.summed, self.metadata)
+        return Term(
+            _to_fraction(coeff), self.tensors, self.ops, self.deltas, self.summed, self.metadata
+        )
 
     def mul(self, other: Term) -> Term:
         return Term(
@@ -321,7 +323,7 @@ def tensor(
             raise ValueError("rank does not match declaration length")
         rank = len(declaration)
 
-    pair_positions = []
+    pair_positions: list[tuple[int, int]] = []
     for pair in antisymmetric_pairs or ():
         a, b = pair
         if isinstance(a, Index):
@@ -336,7 +338,8 @@ def tensor(
             ib = declaration.index(b.name)
         else:
             ib = int(b)
-        pair_positions.append(tuple(sorted((ia, ib))))
+        lo, hi = sorted((ia, ib))
+        pair_positions.append((lo, hi))
 
     return TensorSymbol(name, rank, declaration, hermitian, tuple(sorted(set(pair_positions))))
 
@@ -887,7 +890,7 @@ def openfermion(expr: Any) -> str:
     for term in expr.terms:
         word = " ".join(
             f"{op.mode.value}^" if op.kind == "create" else f"{op.mode.value}" for op in term.ops
-        )  # type: ignore[union-attr]
+        )
         coeff = (
             str(term.coeff.numerator)
             if term.coeff.denominator == 1
