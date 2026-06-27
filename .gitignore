@@ -7,3 +7,7 @@ build/
 dist/
 .venv/
 venv/
+
+# macOS / archives
+.DS_Store
+*.zip
