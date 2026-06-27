@@ -74,18 +74,27 @@ def _mode_text(m: Mode) -> str:
     return str(m.value) if isinstance(m, Orbital) else m.name
 
 
-def indices(names: str) -> Index | tuple[Index, ...]:
-    """Create one or more symbolic indices.
+def index(name: str) -> Index:
+    """Create a single symbolic index.
 
-    ``p, q = indices("p q")`` is the common form.  A single name returns a
-    single ``Index`` for convenience.
+    ``p = index("p")`` is the common form.  Use :func:`indices` for several.
+    """
+
+    (out,) = indices(name)
+    return out
+
+
+def indices(names: str) -> tuple[Index, ...]:
+    """Create a tuple of symbolic indices.
+
+    ``p, q = indices("p q")`` is the common form.  Use :func:`index` for a
+    single index.
     """
 
     parts = names.replace(",", " ").split()
     if not parts:
         raise ValueError("indices() needs at least one name")
-    out = tuple(Index(p) for p in parts)
-    return out[0] if len(out) == 1 else out
+    return tuple(Index(p) for p in parts)
 
 
 def spin_index(name: str, spin_z2: int | None = None) -> Index:
