@@ -1,0 +1,70 @@
+"""NOMAD V1: Normal-Ordered Matrix-free Algebra Device.
+
+The public API is intentionally compact: build expressions with a Python DSL,
+normal-order them, export them, or compile finite-basis expressions into a
+matrix-free determinant-space operator.
+"""
+
+from .core import (
+    Delta,
+    Expr,
+    Index,
+    Op,
+    Orbital,
+    SparseOperator,
+    TensorFactor,
+    TensorSymbol,
+    Term,
+    a,
+    adag,
+    apply_ops_to_det,
+    compile,
+    create,
+    delta,
+    destroy,
+    expand_sums,
+    generate_basis,
+    indices,
+    latex,
+    normal_order,
+    openfermion,
+    particle_delta,
+    prune_by_charge,
+    spin_index,
+    sum_,
+    tensor,
+    text,
+)
+
+__all__ = [
+    "Delta",
+    "Expr",
+    "Index",
+    "Op",
+    "Orbital",
+    "SparseOperator",
+    "TensorFactor",
+    "TensorSymbol",
+    "Term",
+    "a",
+    "adag",
+    "apply_ops_to_det",
+    "compile",
+    "create",
+    "delta",
+    "destroy",
+    "expand_sums",
+    "generate_basis",
+    "indices",
+    "latex",
+    "normal_order",
+    "openfermion",
+    "particle_delta",
+    "prune_by_charge",
+    "spin_index",
+    "sum_",
+    "tensor",
+    "text",
+]
+
+__version__ = "0.1.0-v1"
