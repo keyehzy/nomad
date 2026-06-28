@@ -791,6 +791,22 @@ def _domain_contains_orbital(value: Domain, orbital: int) -> bool | None:
     return None
 
 
+def _domain_local_value(value: Domain, orbital: int) -> int | None:
+    """Domain-local axis position of a global orbital label.
+
+    Mirrors the provenance :func:`expand_sums` attaches to expanded orbitals so
+    that pinning a typed index to a concrete in-domain orbital keeps addressing
+    tensors by their domain-local coordinate.  Returns ``None`` for a non-finite
+    (default/string) domain, whose tensor axes already coincide with the global
+    label.
+    """
+
+    values = value.finite_values()
+    if values is None:
+        return None
+    return values.index(orbital)
+
+
 def _delta_action(left: Mode, right: Mode) -> str:
     """Classify whether a delta may be consumed symbolically.
 
@@ -881,9 +897,18 @@ def _canonicalize_delta_constraints(term: Term) -> Term | None:
             # indices and/or constants, so the delta can be consumed by reducing
             # the finite domain.
             if consts:
-                rep_mode = Orbital(consts[0])
-                for key, _idx in bound:
-                    subst[key] = rep_mode
+                # Pin each dummy to the constant in its *own* domain so the
+                # domain-local tensor axis survives (a single shared Orbital
+                # would lose per-index local_value when the dummies span
+                # different offset domains).
+                pinned = consts[0]
+                for key, idx in bound:
+                    pin_domain = _index_domain(idx)
+                    subst[key] = Orbital(
+                        pinned,
+                        pin_domain,
+                        local_value=_domain_local_value(pin_domain, pinned),
+                    )
                     keep_summed.discard(key)
             elif bound:
                 rep_key, rep_mode = bound[0]

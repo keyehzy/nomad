@@ -124,6 +124,65 @@ def test_typed_domain_mapping_tensor_values_reject_global_keys():
         )
 
 
+def test_delta_pinned_typed_index_keeps_domain_local_tensor_axis():
+    # Regression: when a delta pins a typed dummy to a concrete in-domain
+    # orbital, _canonicalize_delta_constraints substituted a bare Orbital that
+    # dropped the domain-local provenance, so the tensor was evaluated at the
+    # *global* axis (here 3) instead of the local one (1).  With a compact
+    # local-sized array that raised IndexError; with a larger array it silently
+    # returned the wrong coefficient.
+    virt = domain("virt", size=2, start=2)  # globals {2, 3}, local {0, 1}
+    av = index("a", virt)
+    t = tensor("t", [av])
+
+    expanded = expand_sums(
+        sum_(av, delta(av, 3) * t[av] * adag(av)),
+        n_orbitals=4,
+        tensor_values={"t": [100, 200]},  # local 0 -> 100, local 1 -> 200
+    )
+    (term,) = expanded.terms
+    assert term.ops[0].mode.value == 3  # operator keeps the global label
+    assert int(term.coeff) == 200  # tensor addressed by local axis 1, not global 3
+
+
+def test_normal_order_contraction_pin_keeps_domain_local_tensor_axis():
+    # The same pin arises from an ordinary contraction: a(i) a†(2) normal-orders
+    # to δ_{i,2} - a†(2) a(i), and δ_{i,2} pins i to global orbital 2 (= local 0
+    # in virt).  The surviving t[i] contraction term must evaluate at local 0.
+    virt = domain("virt", size=2, start=2)
+    i = index("i", virt)
+    t = tensor("t", [i])
+
+    lowered = expand_sums(
+        normal_order(sum_(i, t[i] * a(i) * adag(2))),
+        n_orbitals=4,
+        tensor_values={"t": [100, 200]},  # local 0 -> 100
+    )
+    constant = next(term for term in lowered.terms if not term.ops)
+    assert int(constant.coeff) == 100
+
+
+def test_shared_constant_pins_each_domain_to_its_own_local_axis():
+    # One global label can pin dummies living in different offset domains; each
+    # must resolve its tensor against its *own* local coordinate, which a single
+    # shared Orbital could not express.  Global 2 is local 1 in occ={0,2} but
+    # local 0 in virt={2,3}.
+    occ = domain("occ", values=[0, 2])
+    virt = domain("virt", size=2, start=2)
+    i = index("i", occ)
+    av = index("a", virt)
+    u = tensor("u", [i])
+    w = tensor("w", [av])
+
+    expanded = expand_sums(
+        sum_(i, av, delta(i, 2) * delta(av, 2) * u[i] * w[av]),
+        n_orbitals=4,
+        tensor_values={"u": [10, 20], "w": [30, 40]},
+    )
+    (term,) = expanded.terms
+    assert int(term.coeff) == 20 * 30  # u@local1 * w@local0
+
+
 def test_string_domain_can_be_made_finite_with_size_override():
     i, j = indices("i j", domain="occ")
     expanded = expand_sums(sum_(i, j, adag(i) * a(j)), domains={"occ": 2})
