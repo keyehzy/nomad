@@ -804,11 +804,20 @@ def _canonicalize_term(term: Term) -> Term | None:
     structural key stops changing.  Convergence is effectively immediate; the
     loop records history only so a (so-far unobserved) cycle resolves to a
     deterministic representative instead of spinning forever.
+
+    Terms with at most one bound dummy take a fast path: a bound dummy always
+    sorts ahead of any free index or orbital regardless of its uid (bound mode
+    keys are ``(1, 0, ...)`` < free ``(1, 1, ...)``), so reordering under
+    relabeling needs >=2 dummies sharing a same-kind operator run or an
+    antisymmetric tensor pair.  Below that threshold the first pass is already a
+    fixed point, so the (common) zero-/one-dummy case skips the re-runs.
     """
 
     t = _canonicalize_term_once(term)
     if t is None:
         return None
+    if len(t.summed) <= 1:
+        return t
     history: list[Term] = []
     keys: list[tuple[Any, ...]] = []
     while True:

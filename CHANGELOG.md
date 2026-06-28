@@ -9,9 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **BREAKING:** Index display names of the form `_<digits>` are now reserved for
-  canonical bound dummies. Constructing a free index with such a name
-  (e.g. `Index("_0")` or `index("_0")`) raises `ValueError`, so a free index can
-  no longer visually collide with a rendered bound dummy.
+  canonical bound dummies. Constructing a free index with such a name raises
+  `ValueError` — whether directly (`Index("_0")`, `index("_0")`) or through any
+  path that coerces a string into a free index (e.g. `adag("_0")`,
+  `delta("_0", q)`, or a string entry in `Term.summed`). A free index can
+  therefore no longer visually collide with a rendered bound dummy.
 - Index metadata (`spin_z2`, `momentum`) now participates in an index's
   structural identity. Two free indices that share a display name but differ in
   metadata (e.g. `index("p")` vs `spin_index("p", spin_z2=1)`) are now distinct
