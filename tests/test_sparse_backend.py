@@ -72,7 +72,7 @@ def test_typed_domain_tensor_values_use_domain_local_axes():
 
 def test_string_domain_can_be_made_finite_with_size_override():
     i, j = indices("i j", domain="occ")
-    expanded = expand_sums(sum_(i, j, adag(i) * a(j)), domain_sizes={"occ": 2})
+    expanded = expand_sums(sum_(i, j, adag(i) * a(j)), domains={"occ": 2})
 
     pairs = sorted((term.ops[0].mode.value, term.ops[1].mode.value) for term in expanded.terms)
     assert pairs == [(0, 0), (0, 1), (1, 0), (1, 1)]
@@ -99,18 +99,27 @@ def test_overlapping_domains_resolve_delta_at_finite_expansion():
     assert pairs == [(1, 1), (2, 2)]
 
 
-def test_domains_and_domain_values_overrides_resolve_string_domains():
+def test_domains_override_accepts_domain_size_and_values_specs():
+    # The single ``domains=`` knob resolves string domains from a Domain object,
+    # an int size, or an iterable of orbital labels.
     i = index("i", "band")
     j = index("j", "shell")
+    k = index("k", "core")
 
     expanded = expand_sums(
-        sum_(i, j, adag(i) * a(j)),
+        sum_(i, j, k, adag(i) * a(j) * adag(k)),
         n_orbitals=6,
-        domains={"band": domain("band", size=2, start=4)},
-        domain_values={"shell": [0, 3]},
+        domains={
+            "band": domain("band", size=2, start=4),
+            "shell": [0, 3],
+            "core": 1,
+        },
     )
-    pairs = sorted((term.ops[0].mode.value, term.ops[1].mode.value) for term in expanded.terms)
-    assert pairs == [(4, 0), (4, 3), (5, 0), (5, 3)]
+    triples = sorted(
+        (term.ops[0].mode.value, term.ops[1].mode.value, term.ops[2].mode.value)
+        for term in expanded.terms
+    )
+    assert triples == [(4, 0, 0), (4, 3, 0), (5, 0, 0), (5, 3, 0)]
 
 
 def test_override_for_already_finite_domain_is_rejected():
@@ -119,10 +128,10 @@ def test_override_for_already_finite_domain_is_rejected():
 
     # A name-keyed override must not silently shadow the concrete start=2 domain.
     with pytest.raises(ValueError, match="already finite"):
-        expand_sums(sum_(av, adag(av)), n_orbitals=4, domain_sizes={"virt": 2})
+        expand_sums(sum_(av, adag(av)), n_orbitals=4, domains={"virt": 2})
 
 
 def test_domain_orbital_outside_n_orbitals_is_rejected():
     band = index("i", "band")
     with pytest.raises(ValueError, match="outside"):
-        expand_sums(sum_(band, adag(band)), n_orbitals=2, domain_values={"band": [0, 5]})
+        expand_sums(sum_(band, adag(band)), n_orbitals=2, domains={"band": [0, 5]})

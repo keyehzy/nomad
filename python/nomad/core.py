@@ -1177,42 +1177,15 @@ def _points_from_domain_spec(name: str, spec: Any) -> tuple[tuple[int, int], ...
     return _points_from_values(spec, context=f"Domain override {name!r}")
 
 
-def _override_points_for(
-    name: str,
-    *,
-    domains: Mapping[str, Any] | None,
-    domain_sizes: Mapping[str, int] | None,
-    domain_values: Mapping[str, Iterable[int]] | None,
-) -> tuple[tuple[int, int], ...] | None:
-    """Resolve an expansion-time override for ``name``, if one is supplied.
-
-    Precedence is ``domain_values`` > ``domains`` > ``domain_sizes``.  Returns
-    ``None`` when no override map mentions ``name``.
-    """
-
-    if domain_values is not None and name in domain_values:
-        return _points_from_values(domain_values[name], context=f"Domain values for {name!r}")
-    if domains is not None and name in domains:
-        return _points_from_domain_spec(name, domains[name])
-    if domain_sizes is not None and name in domain_sizes:
-        return _points_from_size(domain_sizes[name])
-    return None
-
-
 def _domain_expansion_points(
     value: Domain,
     *,
     n_orbitals: int | None,
     domains: Mapping[str, Any] | None,
-    domain_sizes: Mapping[str, int] | None,
-    domain_values: Mapping[str, Iterable[int]] | None,
 ) -> tuple[tuple[int, int], ...]:
-    override = _override_points_for(
-        value.name,
-        domains=domains,
-        domain_sizes=domain_sizes,
-        domain_values=domain_values,
-    )
+    override = None
+    if domains is not None and value.name in domains:
+        override = _points_from_domain_spec(value.name, domains[value.name])
     own = value.finite_values()
     if own is not None:
         # A concrete domain already fixes its own orbital labels.  Matching an
@@ -1254,17 +1227,16 @@ def expand_sums(
     n_orbitals: int | None = None,
     tensor_values: Mapping[str, Any] | None = None,
     domains: Mapping[str, Any] | None = None,
-    domain_sizes: Mapping[str, int] | None = None,
-    domain_values: Mapping[str, Iterable[int]] | None = None,
 ) -> Expr:
     """Expand symbolic sums over finite index domains.
 
     Untyped/default indices expand over ``range(n_orbitals)``.  Typed indices
     expand over the finite data carried by their :class:`Domain`.  A domain that
     is not yet finite (e.g. a string-only domain name) instead draws its range
-    from an override supplied by domain name via ``domains``/``domain_sizes``/
-    ``domain_values``; supplying an override for an already-finite domain is
-    rejected so a concrete domain's start/values are never silently discarded.
+    from an override supplied by domain name via ``domains``, whose values may be
+    a :class:`Domain`, an ``int`` size, or an iterable of orbital labels;
+    supplying an override for an already-finite domain is rejected so a concrete
+    domain's start/values are never silently discarded.
     Tensor factors with concrete ports are
     evaluated when their symbol appears in ``tensor_values``; for typed domains,
     tensor axes use domain-local coordinates while operators use global orbital
@@ -1284,8 +1256,6 @@ def expand_sums(
                 _index_domain(index),
                 n_orbitals=n_orbitals,
                 domains=domains,
-                domain_sizes=domain_sizes,
-                domain_values=domain_values,
             )
             for index in summed
         ]
@@ -1435,8 +1405,6 @@ def compile(  # noqa: A001 - public API intentionally named compile
     sector: Mapping[str, int] | None = None,
     tensor_values: Mapping[str, Any] | None = None,
     domains: Mapping[str, Any] | None = None,
-    domain_sizes: Mapping[str, int] | None = None,
-    domain_values: Mapping[str, Iterable[int]] | None = None,
 ) -> Any:
     if target != "sparse":
         raise NotImplementedError("NOMAD executable backend is target='sparse'")
@@ -1447,8 +1415,6 @@ def compile(  # noqa: A001 - public API intentionally named compile
         n_orbitals=n_orbitals,
         tensor_values=tensor_values,
         domains=domains,
-        domain_sizes=domain_sizes,
-        domain_values=domain_values,
     )
     return SparseOperator(lowered, n_orbitals=n_orbitals, sector=sector or {})
 

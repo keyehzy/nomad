@@ -71,8 +71,9 @@ domain's local coordinate, so a tensor over ``virt × occ`` may be supplied as a
 ``n_virt × n_occ`` array even when virtual orbital labels start after the
 occupied block.  For arbitrary subsets use ``domain("active", values=[...])``.
 String-only domains such as ``indices("i j", domain="occ")`` can be made finite
-at expansion time with ``domain_sizes={"occ": n_occ}`` or
-``domain_values={"occ": [0, 2, 5]}``.
+at expansion time with ``domains={"occ": n_occ}`` (an ``int`` size),
+``domains={"occ": [0, 2, 5]}`` (explicit orbital labels), or
+``domains={"occ": domain("occ", size=n_occ, start=...)}`` (a full ``Domain``).
 
 ## Architecture
 
