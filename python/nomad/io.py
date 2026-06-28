@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .core import Expr, as_expr, latex, openfermion, text
+from .core import Domain, Expr, as_expr, latex, openfermion, text
 
 
 def dumps_text(expr: Any) -> str:
@@ -20,20 +20,46 @@ def dumps_openfermion(expr: Any) -> str:
     return openfermion(expr)
 
 
+def _is_default_domain(value: Domain) -> bool:
+    return (
+        value.name == "spin_orbital"
+        and value.size is None
+        and value.start == 0
+        and value.values is None
+    )
+
+
+def _domain_payload(value: Domain) -> dict[str, Any]:
+    payload: dict[str, Any] = {"name": value.name}
+    if value.values is not None:
+        payload["values"] = list(value.values)
+    elif value.size is not None:
+        payload["size"] = value.size
+        if value.start:
+            payload["start"] = value.start
+    return payload
+
+
 def dumps_json(expr: Any) -> str:
     e: Expr = as_expr(expr).simplify()
     terms = []
     for t in e.terms:
-        terms.append(
-            {
-                "coeff": [t.coeff.numerator, t.coeff.denominator],
-                "summed": [str(i) for i in t.summed],
-                "deltas": [[str(d.left), str(d.right)] for d in t.deltas],
-                "tensors": [
-                    {"symbol": tf.symbol.name, "ports": [str(p) for p in tf.ports]}
-                    for tf in t.tensors
-                ],
-                "ops": [{"kind": op.kind, "mode": str(op.mode)} for op in t.ops],
-            }
-        )
+        item: dict[str, Any] = {
+            "coeff": [t.coeff.numerator, t.coeff.denominator],
+            "summed": [str(i) for i in t.summed],
+            "deltas": [[str(d.left), str(d.right)] for d in t.deltas],
+            "tensors": [
+                {"symbol": tf.symbol.name, "ports": [str(p) for p in tf.ports]}
+                for tf in t.tensors
+            ],
+            "ops": [{"kind": op.kind, "mode": str(op.mode)} for op in t.ops],
+        }
+        summed_domains: dict[str, Any] = {}
+        for i in t.summed:
+            domain_value = i.domain
+            if isinstance(domain_value, Domain) and not _is_default_domain(domain_value):
+                summed_domains[str(i)] = _domain_payload(domain_value)
+        if summed_domains:
+            item["summed_domains"] = summed_domains
+        terms.append(item)
     return json.dumps({"terms": terms}, indent=2, sort_keys=True)

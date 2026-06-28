@@ -10,6 +10,7 @@ from importlib.metadata import version as _pkg_version
 
 from .core import (
     Delta,
+    Domain,
     Expr,
     Index,
     Op,
@@ -25,6 +26,7 @@ from .core import (
     create,
     delta,
     destroy,
+    domain,
     expand_sums,
     generate_basis,
     index,
@@ -42,6 +44,7 @@ from .core import (
 
 __all__ = [
     "Delta",
+    "Domain",
     "Expr",
     "Index",
     "Op",
@@ -57,6 +60,7 @@ __all__ = [
     "create",
     "delta",
     "destroy",
+    "domain",
     "expand_sums",
     "generate_basis",
     "index",

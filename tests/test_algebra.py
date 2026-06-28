@@ -151,3 +151,31 @@ def test_index_and_indices_constructors():
     # index() rejects multiple names
     with pytest.raises(ValueError):
         index("p q")
+
+
+def test_typed_index_domain_constructors_and_rendering():
+    occ = domain("occ", size=2)
+    virt = domain("virt", size=2, start=2)
+    i, j = indices("i j", domain=occ)
+    av = index("a", virt)
+    p = index("p")
+
+    assert isinstance(occ, Domain)
+    assert i.domain == occ
+    assert av.domain == virt
+    assert p.domain.name == "spin_orbital"
+    assert i != index("i", virt)
+
+    rendered = text(sum_(i, av, adag(av) * a(i)))
+    assert "∈occ" in rendered
+    assert "∈virt" in rendered
+    assert text(sum_(i, j, delta(i, j) * adag(i) * a(j))) == "Σ__0∈occ a†(_0) a(_0)"
+
+
+def test_cross_domain_delta_with_disjoint_finite_domains_is_zero():
+    occ = domain("occ", values=[0, 1])
+    virt = domain("virt", values=[2, 3])
+    i = index("i", occ)
+    av = index("a", virt)
+
+    assert not sum_(i, av, delta(i, av) * adag(i) * a(av)).terms

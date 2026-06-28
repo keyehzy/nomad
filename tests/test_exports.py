@@ -31,3 +31,12 @@ def test_openfermion_source_export():
     src = openfermion(2 * adag(0) * a(1))
     assert "from openfermion import FermionOperator" in src
     assert "FermionOperator('0^ 1', 2)" in src
+
+
+def test_json_export_includes_typed_summed_domains():
+    occ = domain("occ", size=2)
+    i = index("i", occ)
+    payload = json.loads(dumps_json(sum_(i, adag(i))))
+    (term,) = payload["terms"]
+    assert term["summed"] == ["_0"]
+    assert term["summed_domains"] == {"_0": {"name": "occ", "size": 2}}

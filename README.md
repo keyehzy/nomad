@@ -45,6 +45,35 @@ print(op.basis)       # (1, 2)
 print(op.to_dense())  # [[2.0, 0.0], [0.0, 3.0]]
 ```
 
+
+### Typed index domains
+
+Indices can carry finite domains so symbolic sums expand over the intended subset
+instead of the whole spin-orbital basis:
+
+```python
+from nomad import *
+
+occ = domain("occ", size=n_occ)
+virt = domain("virt", size=n_virt, start=n_occ)
+
+i, j = indices("i j", domain=occ)
+a_, b = indices("a b", domain=virt)
+t = tensor("t", [a_, i])
+
+T1 = sum_(a_, i, t[a_, i] * adag(a_) * a(i))
+expanded = expand_sums(T1, n_orbitals=n_occ + n_virt)
+```
+
+``domain(name, size=..., start=...)`` uses global orbital labels
+``start..start+size-1`` for operators.  Tensor values are indexed by each
+domain's local coordinate, so a tensor over ``virt × occ`` may be supplied as an
+``n_virt × n_occ`` array even when virtual orbital labels start after the
+occupied block.  For arbitrary subsets use ``domain("active", values=[...])``.
+String-only domains such as ``indices("i j", domain="occ")`` can be made finite
+at expansion time with ``domain_sizes={"occ": n_occ}`` or
+``domain_values={"occ": [0, 2, 5]}``.
+
 ## Architecture
 
 ```text

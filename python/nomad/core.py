@@ -16,6 +16,93 @@ from typing import Any
 
 Number = int | float | Fraction
 IndexKey = tuple[Any, ...]
+FiniteValues = range | tuple[int, ...]
+
+
+def _validate_nonnegative_int(value: int, what: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{what} must be a non-negative integer")
+    return value
+
+
+def _coerce_domain_values(values: Iterable[int], *, context: str) -> tuple[int, ...]:
+    if isinstance(values, (str, bytes)):
+        raise TypeError(f"{context} values must be an iterable of integer orbital labels")
+    out = tuple(_validate_nonnegative_int(v, f"{context} value") for v in values)
+    if len(set(out)) != len(out):
+        raise ValueError(f"{context} values must not contain duplicates")
+    return out
+
+
+@dataclass(frozen=True)
+class Domain:
+    """A symbolic index domain with optional finite expansion data.
+
+    ``Domain("spin_orbital")`` is the default full-basis domain.  Other
+    domains can be made finite either by size/start (global orbital labels
+    ``start .. start + size - 1``) or by an explicit list of global labels.
+    During tensor evaluation, axes are indexed by the local position inside the
+    domain, while operators use the global orbital label.
+    """
+
+    name: str
+    size: int | None = None
+    start: int = 0
+    values: tuple[int, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name or not isinstance(self.name, str):
+            raise ValueError("Domain name must be a non-empty string")
+        if self.size is not None:
+            object.__setattr__(
+                self, "size", _validate_nonnegative_int(self.size, "Domain size")
+            )
+        object.__setattr__(self, "start", _validate_nonnegative_int(self.start, "Domain start"))
+        if self.values is not None:
+            if self.start != 0:
+                raise ValueError("Domain start cannot be combined with explicit values")
+            values = _coerce_domain_values(self.values, context=f"Domain {self.name!r}")
+            if self.size is not None and self.size != len(values):
+                raise ValueError("Domain size does not match the number of explicit values")
+            object.__setattr__(self, "values", values)
+            object.__setattr__(self, "size", len(values))
+        elif self.size is None and self.start != 0:
+            raise ValueError("Domain start requires a finite size")
+
+    def finite_values(self) -> FiniteValues | None:
+        if self.values is not None:
+            return self.values
+        if self.size is not None:
+            return range(self.start, self.start + self.size)
+        return None
+
+    def key(self) -> tuple[Any, ...]:
+        values = self.values
+        return (self.name, self.size, self.start, values)
+
+    def __repr__(self) -> str:  # pragma: no cover - same as str for REPLs
+        return self.name
+
+
+SPIN_ORBITAL_DOMAIN = Domain("spin_orbital")
+
+
+def _coerce_domain(value: Domain | str | None) -> Domain:
+    if value is None:
+        return SPIN_ORBITAL_DOMAIN
+    if isinstance(value, Domain):
+        return value
+    if isinstance(value, str):
+        return Domain(value)
+    raise TypeError("Index domain must be a Domain object, a domain name, or None")
+
+
+def _is_default_spin_orbital_domain(value: Domain) -> bool:
+    return value == SPIN_ORBITAL_DOMAIN
+
+
+def _domain_metadata_key(value: Domain) -> tuple[Any, ...]:
+    return value.key()
 
 
 # Monotonic source of hidden hygienic identities for freshly bound indices.
@@ -53,11 +140,13 @@ class Index:
     name: str
     spin_z2: int | None = None
     momentum: int | None = None
+    domain: Domain | str | None = None
     _uid: int | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not self.name or not isinstance(self.name, str):
             raise ValueError("Index name must be a non-empty string")
+        object.__setattr__(self, "domain", _coerce_domain(self.domain))
         if self._uid is None and _RESERVED_INDEX_NAME.match(self.name):
             raise ValueError(
                 f"Index name {self.name!r} is reserved for canonical bound dummies; "
@@ -84,8 +173,16 @@ def _optional_key(value: int | None) -> tuple[int, int]:
     return (0, 0) if value is None else (1, int(value))
 
 
-def _index_metadata_key(index: Index) -> tuple[tuple[int, int], tuple[int, int]]:
-    return (_optional_key(index.spin_z2), _optional_key(index.momentum))
+def _index_domain(index: Index) -> Domain:
+    return _coerce_domain(index.domain)
+
+
+def _index_metadata_key(index: Index) -> tuple[tuple[int, int], tuple[int, int], tuple[Any, ...]]:
+    return (
+        _optional_key(index.spin_z2),
+        _optional_key(index.momentum),
+        _domain_metadata_key(_index_domain(index)),
+    )
 
 
 def _index_identity(index: Index) -> IndexKey:
@@ -100,7 +197,11 @@ def _fresh_bound_index_like(
     avoid_keys = set(avoid)
     while True:
         candidate = Index(
-            name or index.name, index.spin_z2, index.momentum, _uid=next(_BOUND_INDEX_UIDS)
+            name or index.name,
+            index.spin_z2,
+            index.momentum,
+            _index_domain(index),
+            _uid=next(_BOUND_INDEX_UIDS),
         )
         if _index_identity(candidate) not in avoid_keys:
             return candidate
@@ -108,13 +209,28 @@ def _fresh_bound_index_like(
 
 @dataclass(frozen=True)
 class Orbital:
-    """A concrete finite-basis spin-orbital label."""
+    """A concrete finite-basis spin-orbital label.
+
+    ``value`` is the global orbital label used by operators.  ``local_value`` is
+    optional provenance from a finite domain expansion and is intentionally not
+    part of equality; tensor evaluation can use it to index compact domain-local
+    arrays.
+    """
 
     value: int
+    domain: Domain | str | None = field(default=None, compare=False, repr=False)
+    local_value: int | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.value < 0:
-            raise ValueError("Orbital labels must be non-negative")
+        object.__setattr__(self, "value", _validate_nonnegative_int(self.value, "Orbital label"))
+        if self.domain is not None:
+            object.__setattr__(self, "domain", _coerce_domain(self.domain))
+        if self.local_value is not None:
+            object.__setattr__(
+                self,
+                "local_value",
+                _validate_nonnegative_int(self.local_value, "Orbital local label"),
+            )
 
     def __repr__(self) -> str:  # pragma: no cover - same as str for REPLs
         return str(self.value)
@@ -146,17 +262,49 @@ def _mode_text(m: Mode) -> str:
     return str(m.value) if isinstance(m, Orbital) else m.name
 
 
-def index(name: str) -> Index:
-    """Create a single symbolic index.
+def domain(
+    name: str,
+    size: int | None = None,
+    *,
+    start: int = 0,
+    values: Iterable[int] | None = None,
+) -> Domain:
+    """Create an index domain.
 
-    ``p = index("p")`` is the common form.  Use :func:`indices` for several.
+    ``domain("occ", size=5)`` expands to global orbital labels ``0..4``.
+    ``domain("virt", size=7, start=5)`` expands to ``5..11`` while still using
+    local tensor-axis labels ``0..6``.  ``values=...`` may be used for arbitrary
+    subsets.
     """
 
-    (out,) = indices(name)
+    return Domain(name, size=size, start=start, values=None if values is None else tuple(values))
+
+
+def index(
+    name: str,
+    domain: Domain | str | None = None,
+    *,
+    spin_z2: int | None = None,
+    momentum: int | None = None,
+) -> Index:
+    """Create a single symbolic index.
+
+    ``p = index("p")`` is the common form.  A domain can be supplied as either
+    a :class:`Domain` object or a domain name, e.g. ``i = index("i", "occ")``.
+    Use :func:`indices` for several.
+    """
+
+    (out,) = indices(name, domain=domain, spin_z2=spin_z2, momentum=momentum)
     return out
 
 
-def indices(names: str) -> tuple[Index, ...]:
+def indices(
+    names: str,
+    domain: Domain | str | None = None,
+    *,
+    spin_z2: int | None = None,
+    momentum: int | None = None,
+) -> tuple[Index, ...]:
     """Create a tuple of symbolic indices.
 
     ``p, q = indices("p q")`` is the common form.  Use :func:`index` for a
@@ -166,13 +314,15 @@ def indices(names: str) -> tuple[Index, ...]:
     parts = names.replace(",", " ").split()
     if not parts:
         raise ValueError("indices() needs at least one name")
-    return tuple(Index(p) for p in parts)
+    return tuple(Index(p, spin_z2=spin_z2, momentum=momentum, domain=domain) for p in parts)
 
 
-def spin_index(name: str, spin_z2: int | None = None) -> Index:
+def spin_index(
+    name: str, spin_z2: int | None = None, *, domain: Domain | str | None = None
+) -> Index:
     """Create an index carrying optional ``2*S_z`` metadata."""
 
-    return Index(name, spin_z2=spin_z2)
+    return Index(name, spin_z2=spin_z2, domain=domain)
 
 
 @dataclass(frozen=True)
@@ -596,12 +746,70 @@ def _node_for_mode(m: Mode) -> tuple[Any, ...]:
     return ("idx", _index_identity(m), m)
 
 
+def _domains_may_overlap(left: Domain, right: Domain) -> bool:
+    left_values = left.finite_values()
+    right_values = right.finite_values()
+    if left_values is None or right_values is None:
+        return True
+    return not set(left_values).isdisjoint(right_values)
+
+
+def _domain_contains_orbital(value: Domain, orbital: int) -> bool | None:
+    values = value.finite_values()
+    if values is not None:
+        return orbital in values
+    if _is_default_spin_orbital_domain(value):
+        # Preserve the legacy symbolic assumption that a concrete orbital label
+        # belongs to the full spin-orbital basis; finite backends still validate
+        # labels against n_orbitals when expanding/compiling.
+        return True
+    return None
+
+
+def _delta_action(left: Mode, right: Mode) -> str:
+    """Classify whether a delta may be consumed symbolically.
+
+    Deltas across different index domains are only eliminated when the domains
+    are known-compatible.  Otherwise they are retained until finite expansion,
+    where concrete orbital equalities can be evaluated safely.
+    """
+
+    if isinstance(left, Orbital) and isinstance(right, Orbital):
+        return "drop" if left.value == right.value else "zero"
+    if isinstance(left, Index) and isinstance(right, Index):
+        if _index_domain(left) == _index_domain(right):
+            return "unify"
+        if _domains_may_overlap(_index_domain(left), _index_domain(right)):
+            return "retain"
+        return "zero"
+    if isinstance(left, Index) and isinstance(right, Orbital):
+        contains = _domain_contains_orbital(_index_domain(left), right.value)
+        if contains is False:
+            return "zero"
+        return "unify" if contains is True else "retain"
+    if isinstance(left, Orbital) and isinstance(right, Index):
+        contains = _domain_contains_orbital(_index_domain(right), left.value)
+        if contains is False:
+            return "zero"
+        return "unify" if contains is True else "retain"
+    raise TypeError("Delta endpoints must be Index or Orbital modes")
+
+
 def _canonicalize_delta_constraints(term: Term) -> Term | None:
     if not term.deltas:
         return term
 
     uf = _UnionFind()
+    retained_input: list[Delta] = []
     for d in term.deltas:
+        action = _delta_action(d.left, d.right)
+        if action == "zero":
+            return None
+        if action == "drop":
+            continue
+        if action == "retain":
+            retained_input.append(d)
+            continue
         a, b = _node_for_mode(d.left), _node_for_mode(d.right)
         uf.add(a)
         uf.add(b)
@@ -644,8 +852,9 @@ def _canonicalize_delta_constraints(term: Term) -> Term | None:
             if consts:
                 retained.append(Delta(rep_mode, Orbital(consts[0])))
         else:
-            # All symbols in the equality class are bound dummy indices or
-            # constants, so the delta can be consumed by reducing the domain.
+            # All symbols in the equality class are compatible bound dummy
+            # indices and/or constants, so the delta can be consumed by reducing
+            # the finite domain.
             if consts:
                 rep_mode = Orbital(consts[0])
                 for key, _idx in bound:
@@ -665,14 +874,22 @@ def _canonicalize_delta_constraints(term: Term) -> Term | None:
         for t in term.tensors
     )
     ops = tuple(Op(o.kind, _substitute_mode(o.mode, subst), o.statistics) for o in term.ops)
+    retained.extend(
+        Delta(_substitute_mode(d.left, subst), _substitute_mode(d.right, subst))
+        for d in retained_input
+    )
 
-    # Deduplicate retained free-index constraints canonically.
+    # Deduplicate retained free/cross-domain constraints canonically.
     unique: dict[tuple[Any, Any], Delta] = {}
     for d in retained:
+        action = _delta_action(d.left, d.right)
+        if action == "zero":
+            return None
+        if action == "drop" or _mode_key(d.left) == _mode_key(d.right):
+            continue
         if _mode_key(d.right) < _mode_key(d.left):
             d = Delta(d.right, d.left)
-        if _mode_key(d.left) != _mode_key(d.right):
-            unique[d.key()] = d
+        unique[d.key()] = d
     deltas = tuple(unique[k] for k in sorted(unique))
     summed_ordered = tuple(s for s in term.summed if _index_identity(s) in keep_summed)
     return Term(term.coeff, tensors, ops, deltas, summed_ordered, term.metadata)
@@ -748,7 +965,11 @@ def _rename_bound_dummies(term: Term) -> Term:
                 # separate from the global `_BOUND_INDEX_UIDS` counter; see the
                 # invariant noted at that counter's definition.
                 mapping[key] = Index(
-                    f"_{len(mapping)}", source.spin_z2, source.momentum, _uid=len(mapping)
+                    f"_{len(mapping)}",
+                    source.spin_z2,
+                    source.momentum,
+                    _index_domain(source),
+                    _uid=len(mapping),
                 )
 
     for t in term.tensors:
@@ -907,14 +1128,26 @@ def prune_by_charge(expr: Any, *, delta_n: int = 0) -> Expr:
 # ---------------------------------------------------------------------------
 
 
+def _tensor_axis_value(port: Mode) -> int:
+    if not isinstance(port, Orbital):
+        raise ValueError("Cannot evaluate tensor with symbolic ports")
+    return port.value if port.local_value is None else port.local_value
+
+
 def _eval_tensor_value(values: Any, ports: tuple[Mode, ...]) -> Fraction:
-    idx = tuple(p.value for p in ports if isinstance(p, Orbital))
-    if len(idx) != len(ports):
+    idx = tuple(_tensor_axis_value(p) for p in ports)
+    global_idx = tuple(p.value for p in ports if isinstance(p, Orbital))
+    if len(global_idx) != len(ports):
         raise ValueError("Cannot evaluate tensor with symbolic ports")
     if callable(values):
         val = values(*idx)
     elif isinstance(values, Mapping):
-        val = values[idx]
+        try:
+            val = values[idx]
+        except KeyError:
+            if global_idx == idx:
+                raise
+            val = values[global_idx]
     else:
         val = values
         for i in idx:
@@ -922,25 +1155,116 @@ def _eval_tensor_value(values: Any, ports: tuple[Mode, ...]) -> Fraction:
     return _to_fraction(float(val) if hasattr(val, "item") else val)
 
 
-def expand_sums(
-    expr: Any, *, n_orbitals: int, tensor_values: Mapping[str, Any] | None = None
-) -> Expr:
-    """Expand symbolic sums over a finite spin-orbital basis.
+def _points_from_values(values: Iterable[int], *, context: str) -> tuple[tuple[int, int], ...]:
+    concrete = _coerce_domain_values(values, context=context)
+    return tuple((local, global_value) for local, global_value in enumerate(concrete))
 
-    Tensor factors with concrete ports are evaluated when their symbol appears
-    in ``tensor_values``.  Remaining symbolic tensors are preserved; sparse
-    compilation requires all tensors to be evaluated.
+
+def _points_from_size(size: int, *, start: int = 0) -> tuple[tuple[int, int], ...]:
+    checked_size = _validate_nonnegative_int(size, "Domain override size")
+    checked_start = _validate_nonnegative_int(start, "Domain override start")
+    return tuple((local, checked_start + local) for local in range(checked_size))
+
+
+def _points_from_domain_spec(name: str, spec: Any) -> tuple[tuple[int, int], ...]:
+    if isinstance(spec, Domain):
+        values = spec.finite_values()
+        if values is None:
+            raise ValueError(f"Domain override {name!r} must have finite size or values")
+        return _points_from_values(values, context=f"Domain override {name!r}")
+    if isinstance(spec, int):
+        return _points_from_size(spec)
+    return _points_from_values(spec, context=f"Domain override {name!r}")
+
+
+def _domain_expansion_points(
+    value: Domain,
+    *,
+    n_orbitals: int | None,
+    domains: Mapping[str, Any] | None,
+    domain_sizes: Mapping[str, int] | None,
+    domain_values: Mapping[str, Iterable[int]] | None,
+) -> tuple[tuple[int, int], ...]:
+    points: tuple[tuple[int, int], ...] | None = None
+    if domain_values is not None and value.name in domain_values:
+        points = _points_from_values(
+            domain_values[value.name], context=f"Domain values for {value.name!r}"
+        )
+    elif domains is not None and value.name in domains:
+        points = _points_from_domain_spec(value.name, domains[value.name])
+    elif domain_sizes is not None and value.name in domain_sizes:
+        points = _points_from_size(domain_sizes[value.name])
+    else:
+        finite = value.finite_values()
+        if finite is not None:
+            points = _points_from_values(finite, context=f"Domain {value.name!r}")
+        elif _is_default_spin_orbital_domain(value):
+            if n_orbitals is None:
+                raise ValueError("n_orbitals is required to expand spin_orbital sums")
+            points = _points_from_size(n_orbitals)
+        else:
+            raise ValueError(
+                f"Domain {value.name!r} has no finite size or values; pass "
+                "domain(..., size=...), domain(..., values=...), or an expand_sums "
+                "domain override"
+            )
+
+    if n_orbitals is not None:
+        checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+        for _local, global_value in points:
+            if global_value >= checked_n:
+                raise ValueError(
+                    f"Domain {value.name!r} contains orbital {global_value}, outside "
+                    f"n_orbitals={checked_n}"
+                )
+    return points
+
+
+def expand_sums(
+    expr: Any,
+    *,
+    n_orbitals: int | None = None,
+    tensor_values: Mapping[str, Any] | None = None,
+    domains: Mapping[str, Any] | None = None,
+    domain_sizes: Mapping[str, int] | None = None,
+    domain_values: Mapping[str, Iterable[int]] | None = None,
+) -> Expr:
+    """Expand symbolic sums over finite index domains.
+
+    Untyped/default indices expand over ``range(n_orbitals)``.  Typed indices
+    expand over the finite data carried by their :class:`Domain`, or over an
+    override supplied by domain name.  Tensor factors with concrete ports are
+    evaluated when their symbol appears in ``tensor_values``; for typed domains,
+    tensor axes use domain-local coordinates while operators use global orbital
+    labels.  Remaining symbolic tensors are preserved; sparse compilation
+    requires all tensors to be evaluated.
     """
 
+    if n_orbitals is not None:
+        _validate_nonnegative_int(n_orbitals, "n_orbitals")
     tensor_values = tensor_values or {}
     expr = as_expr(expr).simplify()
     out = Expr.zero()
     for term in expr.terms:
         summed = list(term.summed)
-        domains = [range(n_orbitals) for _ in summed]
-        for values in product(*domains):
+        domain_points = [
+            _domain_expansion_points(
+                _index_domain(index),
+                n_orbitals=n_orbitals,
+                domains=domains,
+                domain_sizes=domain_sizes,
+                domain_values=domain_values,
+            )
+            for index in summed
+        ]
+        for assignment in product(*domain_points):
             subst = {
-                _index_identity(index): Orbital(v) for index, v in zip(summed, values, strict=True)
+                _index_identity(index): Orbital(
+                    global_value, _index_domain(index), local_value=local_value
+                )
+                for index, (local_value, global_value) in zip(
+                    summed, assignment, strict=True
+                )
             }
             tensors = []
             coeff = term.coeff
@@ -1078,12 +1402,22 @@ def compile(  # noqa: A001 - public API intentionally named compile
     n_orbitals: int | None = None,
     sector: Mapping[str, int] | None = None,
     tensor_values: Mapping[str, Any] | None = None,
+    domains: Mapping[str, Any] | None = None,
+    domain_sizes: Mapping[str, int] | None = None,
+    domain_values: Mapping[str, Iterable[int]] | None = None,
 ) -> Any:
     if target != "sparse":
         raise NotImplementedError("NOMAD executable backend is target='sparse'")
     if n_orbitals is None:
         raise ValueError("n_orbitals is required for sparse compilation")
-    lowered = expand_sums(normal_order(expr), n_orbitals=n_orbitals, tensor_values=tensor_values)
+    lowered = expand_sums(
+        normal_order(expr),
+        n_orbitals=n_orbitals,
+        tensor_values=tensor_values,
+        domains=domains,
+        domain_sizes=domain_sizes,
+        domain_values=domain_values,
+    )
     return SparseOperator(lowered, n_orbitals=n_orbitals, sector=sector or {})
 
 
@@ -1117,6 +1451,22 @@ def _format_coeff(c: Fraction) -> str:
     return f"{c.numerator}/{c.denominator}"
 
 
+def _summed_text(index: Index) -> str:
+    label = _mode_text(index)
+    domain_value = _index_domain(index)
+    if _is_default_spin_orbital_domain(domain_value):
+        return label
+    return f"{label}∈{domain_value.name}"
+
+
+def _summed_latex(index: Index) -> str:
+    label = _mode_text(index)
+    domain_value = _index_domain(index)
+    if _is_default_spin_orbital_domain(domain_value):
+        return label
+    return label + r"\in " + domain_value.name
+
+
 def text(expr: Any) -> str:
     expr = as_expr(expr).simplify()
     if not expr.terms:
@@ -1125,7 +1475,7 @@ def text(expr: Any) -> str:
     for term in expr.terms:
         factors = []
         if term.summed:
-            factors.append("Σ_" + ",".join(_mode_text(i) for i in term.summed))
+            factors.append("Σ_" + ",".join(_summed_text(i) for i in term.summed))
         for d in term.deltas:
             factors.append(f"δ({_mode_text(d.left)},{_mode_text(d.right)})")
         for t in term.tensors:
@@ -1153,7 +1503,7 @@ def latex(expr: Any) -> str:
     for term in expr.terms:
         factors = []
         if term.summed:
-            factors.append(r"\sum_{" + ",".join(_mode_text(i) for i in term.summed) + "}")
+            factors.append(r"\sum_{" + ",".join(_summed_latex(i) for i in term.summed) + "}")
         for d in term.deltas:
             factors.append(r"\delta_{" + _mode_text(d.left) + "," + _mode_text(d.right) + "}")
         for t in term.tensors:
