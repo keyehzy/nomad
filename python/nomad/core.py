@@ -777,7 +777,7 @@ def _rename_bound_dummies(term: Term) -> Term:
     )
 
 
-def _canonicalize_term(term: Term) -> Term | None:
+def _canonicalize_term_once(term: Term) -> Term | None:
     if term.coeff == 0:
         return None
     prepared = _ensure_bound_index_identities(term)
@@ -794,6 +794,40 @@ def _canonicalize_term(term: Term) -> Term | None:
     # Deltas are commutative scalar constraints.
     deltas = tuple(sorted(t.deltas, key=lambda d: d.key()))
     return Term(t.coeff, t.tensors, t.ops, deltas, t.summed, t.metadata)
+
+
+def _canonicalize_term(term: Term) -> Term | None:
+    """Canonicalize a term, iterating a single pass to a fixed point.
+
+    One pass is not self-consistent: ``_rename_bound_dummies`` assigns the
+    canonical dummy ids (``_0, _1, ...``) only *after* ``_canonicalize_op_runs``
+    and ``_canonicalize_tensors`` have sorted (and signed) operators using the
+    pre-canonical hygienic uids.  Relabeling can therefore leave a same-kind
+    operator run (e.g. ``a†_p a†_q``) unsorted under its new ids, so a lone pass
+    is neither idempotent nor independent of the order indices were bound in
+    (e.g. the listing order in ``sum_``).  ``Expr.simplify`` relies on both
+    properties for equality and term de-duplication, so we re-run until the
+    structural key stops changing.  Convergence is effectively immediate; the
+    loop records history only so a (so-far unobserved) cycle resolves to a
+    deterministic representative instead of spinning forever.
+    """
+
+    t = _canonicalize_term_once(term)
+    if t is None:
+        return None
+    history: list[Term] = []
+    keys: list[tuple[Any, ...]] = []
+    while True:
+        key = t.structural_key()
+        if key in keys:
+            cycle = history[keys.index(key) :]
+            return min(cycle, key=lambda x: x.structural_key())
+        history.append(t)
+        keys.append(key)
+        nxt = _canonicalize_term_once(t)
+        if nxt is None:
+            return None
+        t = nxt
 
 
 # ---------------------------------------------------------------------------

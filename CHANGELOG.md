@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name-based. Multiplying two independently-bound sums that reuse the same
   display label (e.g. `sum_(p, adag(p)) * sum_(p, a(p))`) no longer collides
   them into a single index; they correctly expand as a Cartesian product.
+- Canonicalization now iterates to a fixed point, making `simplify()` idempotent
+  and independent of the order indices are listed in `sum_` for terms with
+  same-kind operator runs (e.g. `a†_p a†_q`) over bound dummies. Previously the
+  canonical dummy renaming ran *after* the sign-bearing operator/tensor sorts,
+  so equality and term de-duplication could depend on that (irrelevant) order.
 
 ## [0.2.0] - 2026-06-27
 

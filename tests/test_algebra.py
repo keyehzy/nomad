@@ -52,6 +52,36 @@ def test_independent_bound_indices_expand_as_cartesian_product():
     assert text(out) == "a†(0) a(0) + a†(0) a(1) + a†(1) a(0) + a†(1) a(1)"
 
 
+def test_same_kind_operator_run_canonicalization_is_order_invariant():
+    # A same-kind operator run (a† a†) over >=2 bound dummies must canonicalize
+    # independently of the order the indices are listed in sum_ (Σ_pq == Σ_qp),
+    # and the canonical form must be a fixed point of simplify(). Regression for
+    # a bug where _rename_bound_dummies renumbered dummies *after* the
+    # sign-bearing operator/tensor sorts, so the result depended on the
+    # (irrelevant) binding order. See _canonicalize_term.
+    p, q, r, s = indices("p q r s")
+    g = tensor("g", [p, q, r, s])
+    h1 = sum_(p, q, r, s, g[p, q, r, s] * adag(p) * adag(q) * a(s) * a(r))
+    h2 = sum_(q, p, s, r, g[p, q, r, s] * adag(p) * adag(q) * a(s) * a(r))
+    assert h1 == h2
+    assert h1.simplify() == h1
+    assert h2.simplify() == h2
+
+
+def test_alpha_equivalent_terms_merge_in_a_single_simplify():
+    # Two alpha-equivalent operator words must collapse into one term with the
+    # coefficient doubled, not survive as two un-merged terms. Regression for the
+    # non-idempotent canonicalization above leaking into term de-duplication.
+    p, q, r, s = indices("p q r s")
+    g = tensor("g", [p, q, r, s])
+    word = g[p, q, r, s] * adag(p) * adag(q) * a(s) * a(r)
+    relabeled = g[q, p, r, s] * adag(q) * adag(p) * a(s) * a(r)  # == word via p<->q
+    merged = sum_(p, q, r, s, word + relabeled)
+    single = sum_(p, q, r, s, word)
+    assert len(merged.terms) == 1
+    assert merged.terms[0].coeff == 2 * single.terms[0].coeff
+
+
 def test_reserved_dummy_namespace_rejects_free_indices():
     # `_<digits>` is reserved for canonical bound dummies (see _rename_bound_dummies),
     # so a free index may not use it and collide with a rendered dummy.
