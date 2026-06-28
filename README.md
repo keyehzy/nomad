@@ -45,6 +45,41 @@ print(op.basis)       # (1, 2)
 print(op.to_dense())  # [[2.0, 0.0], [0.0, 3.0]]
 ```
 
+General additive-charge sectors are supported through ``basis_sector`` and the
+same ``charges=...`` table can be passed to ``compile``.  Each charge is a
+per-orbital vector; use ``charge(..., modulus=L)`` for cyclic quantum numbers
+such as crystal momentum or parity:
+
+```python
+from nomad import *
+
+n = 4
+orbital_N = [1, 1, 1, 1]
+orbital_spin_z2 = [1, -1, 1, -1]
+orbital_momentum = charge([0, 1, 2, 3], modulus=4)
+
+charges = {
+    "N": orbital_N,
+    "Sz2": orbital_spin_z2,
+    "K": orbital_momentum,
+}
+
+basis = basis_sector(
+    n_orbitals=n,
+    charges=charges,
+    target={"N": 2, "Sz2": 0, "K": 1},
+)
+
+H = adag(0) * a(0) + adag(2) * a(2)
+op = compile(H, target="sparse", n_orbitals=n, sector={"N": 2, "K": 1}, charges=charges)
+```
+
+Symbolic indices can also carry charge metadata, for example
+``index("p", charges={"K": 0, "irrep": 1})``.  ``term_charge_delta`` /
+``operator_charge_delta`` expose the known charge deltas, and
+``prune_by_charge`` removes terms that provably violate requested conservation
+laws while keeping terms whose symbolic charge is not yet known.
+
 
 ### Typed index domains
 

@@ -12,17 +12,34 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import count, product
-from typing import Any
+from numbers import Integral
+from typing import Any, cast
 
 Number = int | float | Fraction
 IndexKey = tuple[Any, ...]
 FiniteValues = range | tuple[int, ...]
 
 
+def _validate_int(value: Any, what: str) -> int:
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{what} must be an integer")
+    return int(value)
+
+
 def _validate_nonnegative_int(value: int, what: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    checked = _validate_int(value, what)
+    if checked < 0:
         raise ValueError(f"{what} must be a non-negative integer")
-    return value
+    return checked
+
+
+def _validate_positive_int(value: int, what: str) -> int:
+    checked = _validate_int(value, what)
+    if checked <= 0:
+        raise ValueError(f"{what} must be a positive integer")
+    return checked
 
 
 def _coerce_domain_values(values: Iterable[int], *, context: str) -> tuple[int, ...]:
@@ -32,6 +49,111 @@ def _coerce_domain_values(values: Iterable[int], *, context: str) -> tuple[int, 
     if len(set(out)) != len(out):
         raise ValueError(f"{context} values must not contain duplicates")
     return out
+
+
+def _coerce_charge_values(values: Iterable[int], *, context: str) -> tuple[int, ...]:
+    if isinstance(values, (str, bytes)):
+        raise TypeError(f"{context} values must be an iterable of integer charges")
+    return tuple(_validate_int(v, f"{context} value") for v in values)
+
+
+@dataclass(frozen=True)
+class Charge:
+    """Per-orbital additive charge values.
+
+    ``values[p]`` is the charge carried by occupying orbital ``p``.  When
+    ``modulus`` is supplied, sector comparisons and charge deltas are evaluated
+    modulo that positive integer, which covers crystal momentum, parity-like
+    labels, and any other additive cyclic quantum number.
+    """
+
+    values: tuple[int, ...]
+    modulus: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "values",
+            _coerce_charge_values(self.values, context="Charge"),
+        )
+        if self.modulus is not None:
+            object.__setattr__(self, "modulus", _validate_positive_int(self.modulus, "modulus"))
+
+
+def charge(values: Iterable[int], *, modulus: int | None = None) -> Charge:
+    """Create a per-orbital additive charge vector.
+
+    A bare sequence such as ``[1, 1, 1, 1]`` can be used directly in most APIs;
+    this helper is only needed when the charge is conserved modulo an integer.
+    """
+
+    return Charge(tuple(values), modulus=modulus)
+
+
+def _coerce_charge_spec(
+    name: str,
+    spec: Any,
+    *,
+    n_orbitals: int | None = None,
+) -> Charge:
+    if isinstance(spec, Charge):
+        out = spec
+    elif isinstance(spec, Mapping):
+        if "values" not in spec:
+            raise ValueError(
+                f"Charge {name!r} mapping specifications must contain a 'values' entry"
+            )
+        modulus = spec.get("modulus")
+        if "mod" in spec:
+            if modulus is not None and modulus != spec["mod"]:
+                raise ValueError(f"Charge {name!r} has conflicting 'modulus' and 'mod' values")
+            modulus = spec["mod"]
+        out = Charge(tuple(spec["values"]), modulus=modulus)
+    elif (
+        isinstance(spec, tuple)
+        and len(spec) == 2
+        and not isinstance(spec[0], Integral)
+        and (spec[1] is None or isinstance(spec[1], Integral))
+    ):
+        out = Charge(tuple(spec[0]), modulus=cast("int | None", spec[1]))
+    else:
+        out = Charge(tuple(spec))
+
+    if n_orbitals is not None and len(out.values) != n_orbitals:
+        raise ValueError(
+            f"Charge {name!r} has length {len(out.values)}, expected n_orbitals={n_orbitals}"
+        )
+    return out
+
+
+def _coerce_charges(
+    charges: Mapping[str, Any] | None,
+    *,
+    n_orbitals: int | None = None,
+) -> dict[str, Charge]:
+    out: dict[str, Charge] = {}
+    for name, spec in (charges or {}).items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Charge names must be non-empty strings")
+        out[name] = _coerce_charge_spec(name, spec, n_orbitals=n_orbitals)
+    return dict(sorted(out.items()))
+
+
+def _coerce_index_charges(charges: Any) -> tuple[tuple[str, int], ...]:
+    if charges is None:
+        return ()
+    if isinstance(charges, (str, bytes)):
+        raise TypeError("Index charges must be a mapping or iterable of (name, value) pairs")
+    raw_items = charges.items() if isinstance(charges, Mapping) else charges
+    out: dict[str, int] = {}
+    for raw_name, raw_value in raw_items:
+        if not isinstance(raw_name, str) or not raw_name:
+            raise ValueError("Index charge names must be non-empty strings")
+        value = _validate_int(raw_value, f"Index charge {raw_name!r}")
+        if raw_name in out and out[raw_name] != value:
+            raise ValueError(f"Index charge {raw_name!r} was provided more than once")
+        out[raw_name] = value
+    return tuple(sorted(out.items()))
 
 
 @dataclass(frozen=True, eq=False)
@@ -151,8 +273,9 @@ class Index:
     """A symbolic orbital/spin-orbital index.
 
     NOMAD treats indices as labels over a finite spin-orbital basis.  Optional
-    metadata fields are present so the frontend can carry conservation-law
-    annotations without committing to the future full charge-vector system.
+    metadata fields let the frontend carry additive charge annotations before a
+    finite orbital charge table is available.  ``spin_z2`` and ``momentum`` are
+    legacy convenience aliases for ``charges={"Sz2": ..., "K": ...}``.
     When an index is bound by ``sum_``, ``_uid`` carries its hidden hygienic
     identity; ``name`` remains only the human-readable display label.
 
@@ -165,11 +288,30 @@ class Index:
     momentum: int | None = None
     domain: Domain | str | None = None
     _uid: int | None = field(default=None, repr=False)
+    charges: Any = None
 
     def __post_init__(self) -> None:
         if not self.name or not isinstance(self.name, str):
             raise ValueError("Index name must be a non-empty string")
         object.__setattr__(self, "domain", _coerce_domain(self.domain))
+        charge_map = dict(_coerce_index_charges(self.charges))
+        if self.spin_z2 is not None:
+            spin_z2 = _validate_int(self.spin_z2, "Index spin_z2")
+            if "Sz2" in charge_map and charge_map["Sz2"] != spin_z2:
+                raise ValueError("Index spin_z2 conflicts with charges['Sz2']")
+            charge_map.setdefault("Sz2", spin_z2)
+            object.__setattr__(self, "spin_z2", spin_z2)
+        elif "Sz2" in charge_map:
+            object.__setattr__(self, "spin_z2", charge_map["Sz2"])
+        if self.momentum is not None:
+            momentum = _validate_int(self.momentum, "Index momentum")
+            if "K" in charge_map and charge_map["K"] != momentum:
+                raise ValueError("Index momentum conflicts with charges['K']")
+            charge_map.setdefault("K", momentum)
+            object.__setattr__(self, "momentum", momentum)
+        elif "K" in charge_map:
+            object.__setattr__(self, "momentum", charge_map["K"])
+        object.__setattr__(self, "charges", tuple(sorted(charge_map.items())))
         if self._uid is None and _RESERVED_INDEX_NAME.match(self.name):
             raise ValueError(
                 f"Index name {self.name!r} is reserved for canonical bound dummies; "
@@ -196,14 +338,20 @@ def _optional_key(value: int | None) -> tuple[int, int]:
     return (0, 0) if value is None else (1, int(value))
 
 
+def _index_charge_items(index: Index) -> tuple[tuple[str, int], ...]:
+    # ``Index.__post_init__`` canonicalizes the public constructor's flexible
+    # ``charges`` input into this exact tuple shape.  The cast keeps the runtime
+    # representation precise without rejecting mapping inputs at construction.
+    return cast(tuple[tuple[str, int], ...], index.charges)
+
+
 def _index_domain(index: Index) -> Domain:
     return _coerce_domain(index.domain)
 
 
-def _index_metadata_key(index: Index) -> tuple[tuple[int, int], tuple[int, int], tuple[Any, ...]]:
+def _index_metadata_key(index: Index) -> tuple[tuple[tuple[str, int], ...], tuple[Any, ...]]:
     return (
-        _optional_key(index.spin_z2),
-        _optional_key(index.momentum),
+        _index_charge_items(index),
         _domain_metadata_key(_index_domain(index)),
     )
 
@@ -225,6 +373,7 @@ def _fresh_bound_index_like(
             index.momentum,
             _index_domain(index),
             _uid=next(_BOUND_INDEX_UIDS),
+            charges=_index_charge_items(index),
         )
         if _index_identity(candidate) not in avoid_keys:
             return candidate
@@ -335,6 +484,7 @@ def index(
     *,
     spin_z2: int | None = None,
     momentum: int | None = None,
+    charges: Mapping[str, int] | None = None,
 ) -> Index:
     """Create a single symbolic index.
 
@@ -343,7 +493,13 @@ def index(
     Use :func:`indices` for several.
     """
 
-    (out,) = indices(name, domain=domain, spin_z2=spin_z2, momentum=momentum)
+    (out,) = indices(
+        name,
+        domain=domain,
+        spin_z2=spin_z2,
+        momentum=momentum,
+        charges=charges,
+    )
     return out
 
 
@@ -353,6 +509,7 @@ def indices(
     *,
     spin_z2: int | None = None,
     momentum: int | None = None,
+    charges: Mapping[str, int] | None = None,
 ) -> tuple[Index, ...]:
     """Create a tuple of symbolic indices.
 
@@ -363,15 +520,21 @@ def indices(
     parts = names.replace(",", " ").split()
     if not parts:
         raise ValueError("indices() needs at least one name")
-    return tuple(Index(p, spin_z2=spin_z2, momentum=momentum, domain=domain) for p in parts)
+    return tuple(
+        Index(p, spin_z2=spin_z2, momentum=momentum, domain=domain, charges=charges) for p in parts
+    )
 
 
 def spin_index(
-    name: str, spin_z2: int | None = None, *, domain: Domain | str | None = None
+    name: str,
+    spin_z2: int | None = None,
+    *,
+    domain: Domain | str | None = None,
+    charges: Mapping[str, int] | None = None,
 ) -> Index:
     """Create an index carrying optional ``2*S_z`` metadata."""
 
-    return Index(name, spin_z2=spin_z2, domain=domain)
+    return Index(name, spin_z2=spin_z2, domain=domain, charges=charges)
 
 
 @dataclass(frozen=True)
@@ -432,6 +595,9 @@ class Op:
     def key(self) -> tuple[Any, ...]:
         return (self.kind, _mode_key(self.mode), self.statistics)
 
+    def charge_delta(self, *, charges: Mapping[str, Any] | None = None) -> dict[str, int]:
+        return operator_charge_delta(self, charges=charges)
+
 
 @dataclass(frozen=True)
 class Delta:
@@ -471,6 +637,9 @@ class Term:
         return Term(
             _to_fraction(coeff), self.tensors, self.ops, self.deltas, self.summed, self.metadata
         )
+
+    def charge_delta(self, *, charges: Mapping[str, Any] | None = None) -> dict[str, int]:
+        return term_charge_delta(self, charges=charges)
 
     def mul(self, other: Term) -> Term:
         left = _ensure_bound_index_identities(self)
@@ -1044,6 +1213,7 @@ def _rename_bound_dummies(term: Term) -> Term:
                     source.momentum,
                     _index_domain(source),
                     _uid=len(mapping),
+                    charges=_index_charge_items(source),
                 )
 
     for t in term.tensors:
@@ -1197,11 +1367,248 @@ def particle_delta(term: Term) -> int:
     return sum(1 if o.kind == "create" else -1 for o in term.ops)
 
 
-def prune_by_charge(expr: Any, *, delta_n: int = 0) -> Expr:
-    """Compile-time U(1) particle-number pruning."""
+def _mode_charge_value(mode: Mode, name: str, specs: Mapping[str, Charge]) -> int | None:
+    if name == "N":
+        if isinstance(mode, Orbital) and name in specs:
+            return _orbital_charge_value(mode.value, name, specs[name])
+        if isinstance(mode, Index):
+            return dict(_index_charge_items(mode)).get(name, 1)
+        return 1
+    if isinstance(mode, Orbital):
+        spec = specs.get(name)
+        if spec is None:
+            return None
+        return _orbital_charge_value(mode.value, name, spec)
+    return dict(_index_charge_items(mode)).get(name)
+
+
+def _mode_unknown_charge_key(mode: Mode, name: str) -> tuple[Any, ...]:
+    if isinstance(mode, Orbital):
+        return ("orbital", mode.value, name)
+    return ("index", _index_identity(mode), name)
+
+
+def _charge_delta_sign(op: Op) -> int:
+    return 1 if op.kind == "create" else -1
+
+
+def _normalize_charge_value(value: int, spec: Charge | None) -> int:
+    if spec is None or spec.modulus is None:
+        return value
+    return value % spec.modulus
+
+
+def _orbital_charge_value(orbital: int, name: str, spec: Charge) -> int:
+    checked = _validate_nonnegative_int(orbital, "Orbital label")
+    if checked >= len(spec.values):
+        raise ValueError(
+            f"Charge {name!r} has length {len(spec.values)} and does not cover orbital {checked}"
+        )
+    return spec.values[checked]
+
+
+def _charge_delta_matches(
+    actual: int,
+    expected: int,
+    spec: Charge | None,
+) -> bool:
+    if spec is None or spec.modulus is None:
+        return actual == expected
+    return (actual - expected) % spec.modulus == 0
+
+
+def _term_charge_delta_analysis(
+    term: Term,
+    specs: Mapping[str, Charge],
+    *,
+    names: Iterable[str] = (),
+) -> dict[str, int]:
+    candidate_names = set(names)
+    candidate_names.add("N")
+    candidate_names.update(specs)
+    for op in term.ops:
+        if isinstance(op.mode, Index):
+            candidate_names.update(name for name, _value in _index_charge_items(op.mode))
+
+    known: dict[str, int] = {}
+    for name in sorted(candidate_names):
+        numeric = 0
+        unknown: dict[tuple[Any, ...], int] = {}
+        for op in term.ops:
+            signed = _charge_delta_sign(op)
+            value = _mode_charge_value(op.mode, name, specs)
+            if value is None:
+                key = _mode_unknown_charge_key(op.mode, name)
+                unknown[key] = unknown.get(key, 0) + signed
+            else:
+                numeric += signed * value
+        unknown = {key: coeff for key, coeff in unknown.items() if coeff}
+        if not unknown:
+            known[name] = _normalize_charge_value(numeric, specs.get(name))
+    return known
+
+
+def operator_charge_delta(op: Op, *, charges: Mapping[str, Any] | None = None) -> dict[str, int]:
+    """Known additive charge delta for one creation/annihilation operator.
+
+    Concrete orbital operators use the supplied per-orbital charge table.  Index
+    operators use metadata stored on the :class:`Index`.  Unknown symbolic
+    charges are omitted; particle number ``N`` is always known unless explicitly
+    overridden by a per-orbital ``N`` charge table.
+    """
+
+    specs = _coerce_charges(charges)
+    candidate_names = {"N", *specs.keys()}
+    if isinstance(op.mode, Index):
+        candidate_names.update(name for name, _value in _index_charge_items(op.mode))
+
+    out: dict[str, int] = {}
+    signed = _charge_delta_sign(op)
+    for name in sorted(candidate_names):
+        value = _mode_charge_value(op.mode, name, specs)
+        if value is not None:
+            out[name] = _normalize_charge_value(signed * value, specs.get(name))
+    return out
+
+
+def term_charge_delta(term: Term, *, charges: Mapping[str, Any] | None = None) -> dict[str, int]:
+    """Known additive charge delta for a term's operator word.
+
+    If a charge is symbolic but cancels structurally (for example
+    ``a†(p) a(p)``), it is reported as zero.  Charges that remain genuinely
+    unknown are omitted so pruning never discards a term unless a violation is
+    certain.
+    """
+
+    return _term_charge_delta_analysis(term, _coerce_charges(charges))
+
+
+def charge_delta(value: Op | Term | Expr, *, charges: Mapping[str, Any] | None = None) -> Any:
+    """Return additive charge deltas for an operator, term, or expression.
+
+    Expressions must have a single common known delta across all terms; use
+    :func:`term_charge_delta` when per-term information is desired.
+    """
+
+    if isinstance(value, Op):
+        return operator_charge_delta(value, charges=charges)
+    if isinstance(value, Term):
+        return term_charge_delta(value, charges=charges)
+    if isinstance(value, Expr):
+        deltas = tuple(term_charge_delta(t, charges=charges) for t in value.terms)
+        if not deltas:
+            return {}
+        first = deltas[0]
+        if all(delta == first for delta in deltas):
+            return first
+        raise ValueError("Expression contains terms with different charge deltas")
+    raise TypeError(f"Cannot compute charge delta for {type(value)!r}")
+
+
+def _charge_name_set(names: Iterable[str], *, context: str) -> tuple[str, ...]:
+    out = []
+    seen: set[str] = set()
+    for name in names:
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"{context} charge names must be non-empty strings")
+        if name not in seen:
+            out.append(name)
+            seen.add(name)
+    return tuple(out)
+
+
+def _coerce_charge_target(
+    target: Mapping[str, int] | None,
+    *,
+    charges: Mapping[str, Any] | None = None,
+) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for name, value in (target or {}).items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Target charge names must be non-empty strings")
+        out[name] = _validate_int(value, f"Target charge {name!r}")
+
+    # Legacy determinant sectors accepted {"Sz": ...} as an alias for Sz2.  Keep
+    # that behavior unless the user explicitly supplies a separate charge named
+    # "Sz".
+    if "Sz" in out and (charges is None or "Sz" not in charges):
+        sz_value = out.pop("Sz")
+        if "Sz2" in out and out["Sz2"] != sz_value:
+            raise ValueError("Target cannot specify conflicting 'Sz' and 'Sz2' values")
+        out["Sz2"] = sz_value
+    return dict(sorted(out.items()))
+
+
+def _required_charge_deltas(
+    *,
+    delta_n: int | None,
+    target: Mapping[str, int] | None,
+    conserve: Iterable[str] | None,
+    delta: Mapping[str, int] | None,
+    charges: Mapping[str, Any] | None,
+) -> dict[str, int]:
+    required: dict[str, int] = {}
+    for name in _coerce_charge_target(target, charges=charges):
+        required[name] = 0
+    if conserve is not None:
+        for name in _charge_name_set(conserve, context="conserve"):
+            required[name] = 0
+    for name, value in _coerce_charge_target(delta, charges=charges).items():
+        required[name] = value
+    if delta_n is not None:
+        required["N"] = _validate_int(delta_n, "delta_n")
+    return dict(sorted(required.items()))
+
+
+def prune_by_charge(
+    expr: Any,
+    *,
+    delta_n: int | None = 0,
+    charges: Mapping[str, Any] | None = None,
+    target: Mapping[str, int] | None = None,
+    conserve: Iterable[str] | None = None,
+    delta: Mapping[str, int] | None = None,
+) -> Expr:
+    """Prune terms whose additive charge delta violates conservation laws.
+
+    The legacy call ``prune_by_charge(expr)`` keeps only particle-number
+    conserving terms (``ΔN = 0``).  General sectors can be requested with
+    ``target={...}`` or ``conserve=[...]``; those names require zero term delta.
+    Use ``delta={"Q": q}`` for a non-zero required delta and ``delta_n=None`` to
+    disable the legacy particle-number default.
+
+    A term with an unknown symbolic delta is kept.  It will be pruned later once
+    indices are expanded to concrete orbitals, or retained if the violation
+    cannot be proven.
+    """
 
     expr = as_expr(expr).simplify()
-    return Expr(tuple(t for t in expr.terms if particle_delta(t) == delta_n)).simplify()
+    specs = _coerce_charges(charges)
+    required = _required_charge_deltas(
+        delta_n=delta_n,
+        target=target,
+        conserve=conserve,
+        delta=delta,
+        charges=charges,
+    )
+    if not required:
+        return cast(Expr, expr)
+
+    kept = []
+    required_names = tuple(required)
+    for term in expr.terms:
+        known = _term_charge_delta_analysis(term, specs, names=required_names)
+        violates = False
+        for name, expected in required.items():
+            actual = known.get(name)
+            if actual is None:
+                continue
+            if not _charge_delta_matches(actual, expected, specs.get(name)):
+                violates = True
+                break
+        if not violates:
+            kept.append(term)
+    return Expr(tuple(kept)).simplify()
 
 
 # ---------------------------------------------------------------------------
@@ -1414,24 +1821,139 @@ def apply_ops_to_det(det: int, ops: Sequence[Op]) -> tuple[int, int] | None:
     return d, sign
 
 
-def generate_basis(
-    n_orbitals: int, sector: Mapping[str, int] | None = None, spin_z2: Sequence[int] | None = None
+def _default_spin_z2(n_orbitals: int) -> tuple[int, ...]:
+    return tuple(1 if i % 2 == 0 else -1 for i in range(n_orbitals))
+
+
+def _complete_charge_specs(
+    n_orbitals: int,
+    charges: Mapping[str, Any] | None,
+    target: Mapping[str, int] | None,
+    *,
+    spin_z2: Sequence[int] | None = None,
+    require_target: bool = False,
+) -> dict[str, Charge]:
+    checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+    target_map = _coerce_charge_target(target, charges=charges)
+    specs = _coerce_charges(charges, n_orbitals=checked_n)
+
+    if "N" in target_map and "N" not in specs:
+        specs["N"] = Charge(tuple(1 for _ in range(checked_n)))
+    if "Sz2" in target_map and "Sz2" not in specs:
+        values = tuple(spin_z2) if spin_z2 is not None else _default_spin_z2(checked_n)
+        specs["Sz2"] = _coerce_charge_spec("Sz2", values, n_orbitals=checked_n)
+
+    if require_target:
+        missing = sorted(name for name in target_map if name not in specs)
+        if missing:
+            names = ", ".join(repr(name) for name in missing)
+            raise ValueError(f"No per-orbital charge values supplied for target charge(s): {names}")
+    return dict(sorted(specs.items()))
+
+
+def _det_charge_value(det: int, name: str, spec: Charge) -> int:
+    total = 0
+    for orbital, value in enumerate(spec.values):
+        if det & (1 << orbital):
+            total += value
+    return _normalize_charge_value(total, spec)
+
+
+def determinant_charges(
+    det: int,
+    *,
+    n_orbitals: int,
+    charges: Mapping[str, Any] | None = None,
+) -> dict[str, int]:
+    """Compute additive charges of a determinant bitstring."""
+
+    checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+    checked_det = _validate_nonnegative_int(det, "determinant")
+    if checked_det >= (1 << checked_n):
+        raise ValueError(f"determinant {checked_det} does not fit in n_orbitals={checked_n}")
+
+    specs = _coerce_charges(charges, n_orbitals=checked_n)
+    out: dict[str, int] = {}
+    if "N" not in specs:
+        out["N"] = checked_det.bit_count()
+    for name, spec in specs.items():
+        out[name] = _det_charge_value(checked_det, name, spec)
+    return dict(sorted(out.items()))
+
+
+def _det_matches_charge_target(
+    det: int,
+    specs: Mapping[str, Charge],
+    target: Mapping[str, int],
+) -> bool:
+    for name, wanted in target.items():
+        spec = specs[name]
+        actual = _det_charge_value(det, name, spec)
+        if not _charge_delta_matches(actual, wanted, spec):
+            return False
+    return True
+
+
+def basis_sector(
+    n_orbitals: int,
+    charges: Mapping[str, Any] | None = None,
+    target: Mapping[str, int] | None = None,
+    *,
+    spin_z2: Sequence[int] | None = None,
 ) -> tuple[int, ...]:
-    sector = sector or {}
-    required_n = sector.get("N")
-    required_sz2 = sector.get("Sz2", sector.get("Sz"))
-    if spin_z2 is None:
-        spin_z2 = tuple(1 if i % 2 == 0 else -1 for i in range(n_orbitals))
+    """Generate a determinant basis in an additive-charge sector.
+
+    ``charges`` maps each conserved quantity name to per-orbital additive
+    values.  A value may be a plain sequence, a :class:`Charge`, or a mapping
+    like ``{"values": [...], "modulus": L}``.  ``target`` selects the sector;
+    only target names are filtered.  ``N`` defaults to one particle per occupied
+    orbital, and the legacy ``Sz2`` sector defaults to alternating ``(+1, -1)``
+    spin labels when no explicit charge vector is supplied.
+    """
+
+    checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+    target_map = _coerce_charge_target(target, charges=charges)
+    specs = _complete_charge_specs(
+        checked_n,
+        charges,
+        target_map,
+        spin_z2=spin_z2,
+        require_target=True,
+    )
     out = []
-    for det in range(1 << n_orbitals):
-        if required_n is not None and det.bit_count() != required_n:
-            continue
-        if required_sz2 is not None:
-            sz = sum(spin_z2[i] for i in range(n_orbitals) if det & (1 << i))
-            if sz != required_sz2:
-                continue
-        out.append(det)
+    for det in range(1 << checked_n):
+        if _det_matches_charge_target(det, specs, target_map):
+            out.append(det)
     return tuple(out)
+
+
+def generate_basis(
+    n_orbitals: int,
+    sector: Mapping[str, int] | None = None,
+    spin_z2: Sequence[int] | None = None,
+    charges: Mapping[str, Any] | None = None,
+) -> tuple[int, ...]:
+    charge_specs: dict[str, Any] = dict(charges or {})
+    if spin_z2 is not None and "Sz2" not in charge_specs and "Sz" not in charge_specs:
+        charge_specs["Sz2"] = tuple(spin_z2)
+    return basis_sector(
+        n_orbitals,
+        charges=charge_specs,
+        target=sector,
+        spin_z2=spin_z2,
+    )
+
+
+def _validate_basis(basis: Sequence[int], *, n_orbitals: int) -> tuple[int, ...]:
+    checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+    limit = 1 << checked_n
+    out = tuple(_validate_nonnegative_int(det, "basis determinant") for det in basis)
+    if len(set(out)) != len(out):
+        raise ValueError("basis contains duplicate determinants")
+    for det in out:
+        if det >= limit:
+            raise ValueError(f"basis determinant {det} does not fit in n_orbitals={checked_n}")
+    return out
 
 
 @dataclass
@@ -1439,27 +1961,35 @@ class SparseOperator:
     expr: Expr
     n_orbitals: int
     sector: Mapping[str, int] = field(default_factory=dict)
-    basis: tuple[int, ...] = field(init=False)
+    basis: Sequence[int] | None = None
+    charges: Mapping[str, Any] | None = None
     index_of: dict[int, int] = field(init=False)
 
     def __post_init__(self) -> None:
+        self.n_orbitals = _validate_nonnegative_int(self.n_orbitals, "n_orbitals")
         self.expr = self.expr.simplify()
         _require_finite_numeric(self.expr)
-        self.basis = generate_basis(self.n_orbitals, self.sector)
-        self.index_of = {d: i for i, d in enumerate(self.basis)}
+        sector = _coerce_charge_target(self.sector, charges=self.charges)
+        self.sector = sector
+        if self.basis is None:
+            basis = basis_sector(self.n_orbitals, charges=self.charges, target=sector)
+        else:
+            basis = _validate_basis(self.basis, n_orbitals=self.n_orbitals)
+        self.basis = basis
+        self.index_of = {d: i for i, d in enumerate(basis)}
 
     @property
     def shape(self) -> tuple[int, int]:
-        n = len(self.basis)
+        basis = cast(tuple[int, ...], self.basis)
+        n = len(basis)
         return (n, n)
 
     def matvec(self, x: Sequence[Number]) -> list[float]:
-        if len(x) != len(self.basis):
-            raise ValueError(
-                f"Input vector length {len(x)} does not match basis size {len(self.basis)}"
-            )
-        y = [0.0 for _ in self.basis]
-        for col, det in enumerate(self.basis):
+        basis = cast(tuple[int, ...], self.basis)
+        if len(x) != len(basis):
+            raise ValueError(f"Input vector length {len(x)} does not match basis size {len(basis)}")
+        y = [0.0 for _ in basis]
+        for col, det in enumerate(basis):
             amp = float(x[col])
             if amp == 0.0:
                 continue
@@ -1474,7 +2004,8 @@ class SparseOperator:
         return y
 
     def to_dense(self) -> list[list[float]]:
-        n = len(self.basis)
+        basis = cast(tuple[int, ...], self.basis)
+        n = len(basis)
         mat = [[0.0 for _ in range(n)] for _ in range(n)]
         for col in range(n):
             e = [0.0 for _ in range(n)]
@@ -1491,6 +2022,8 @@ def compile(  # noqa: A001 - public API intentionally named compile
     target: str = "sparse",
     n_orbitals: int | None = None,
     sector: Mapping[str, int] | None = None,
+    charges: Mapping[str, Any] | None = None,
+    basis: Sequence[int] | None = None,
     tensor_values: Mapping[str, Any] | None = None,
     domains: Mapping[str, Any] | None = None,
 ) -> Any:
@@ -1498,13 +2031,37 @@ def compile(  # noqa: A001 - public API intentionally named compile
         raise NotImplementedError("NOMAD executable backend is target='sparse'")
     if n_orbitals is None:
         raise ValueError("n_orbitals is required for sparse compilation")
-    lowered = expand_sums(
+    checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+    sector = _coerce_charge_target(sector, charges=charges)
+    effective_charges: Mapping[str, Any] | None = charges
+    if basis is None and sector:
+        effective_charges = _complete_charge_specs(checked_n, charges, sector, require_target=True)
+
+    ordered = prune_by_charge(
         normal_order(expr),
+        delta_n=None,
+        charges=effective_charges,
+        target=sector,
+    )
+    lowered = expand_sums(
+        ordered,
         n_orbitals=n_orbitals,
         tensor_values=tensor_values,
         domains=domains,
     )
-    return SparseOperator(lowered, n_orbitals=n_orbitals, sector=sector or {})
+    lowered = prune_by_charge(
+        lowered,
+        delta_n=None,
+        charges=effective_charges,
+        target=sector,
+    )
+    return SparseOperator(
+        lowered,
+        n_orbitals=checked_n,
+        sector=sector,
+        charges=effective_charges,
+        basis=basis,
+    )
 
 
 def openfermion(expr: Any) -> str:

@@ -8,6 +8,7 @@ from typing import Any
 from .core import (
     Domain,
     Expr,
+    _index_charge_items,
     _is_default_spin_orbital_domain,
     _tensor_port_text,
     as_expr,
@@ -63,5 +64,10 @@ def dumps_json(expr: Any) -> str:
                 summed_domains[str(i)] = _domain_payload(domain_value)
         if summed_domains:
             item["summed_domains"] = summed_domains
+        summed_charges = {
+            str(i): dict(_index_charge_items(i)) for i in t.summed if _index_charge_items(i)
+        }
+        if summed_charges:
+            item["summed_charges"] = summed_charges
         terms.append(item)
     return json.dumps({"terms": terms}, indent=2, sort_keys=True)
