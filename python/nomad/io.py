@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .core import Domain, Expr, as_expr, latex, openfermion, text
+from .core import Domain, Expr, _is_default_spin_orbital_domain, as_expr, latex, openfermion, text
 
 
 def dumps_text(expr: Any) -> str:
@@ -18,15 +18,6 @@ def dumps_latex(expr: Any) -> str:
 
 def dumps_openfermion(expr: Any) -> str:
     return openfermion(expr)
-
-
-def _is_default_domain(value: Domain) -> bool:
-    return (
-        value.name == "spin_orbital"
-        and value.size is None
-        and value.start == 0
-        and value.values is None
-    )
 
 
 def _domain_payload(value: Domain) -> dict[str, Any]:
@@ -57,7 +48,9 @@ def dumps_json(expr: Any) -> str:
         summed_domains: dict[str, Any] = {}
         for i in t.summed:
             domain_value = i.domain
-            if isinstance(domain_value, Domain) and not _is_default_domain(domain_value):
+            if isinstance(domain_value, Domain) and not _is_default_spin_orbital_domain(
+                domain_value
+            ):
                 summed_domains[str(i)] = _domain_payload(domain_value)
         if summed_domains:
             item["summed_domains"] = summed_domains

@@ -54,6 +54,7 @@ instead of the whole spin-orbital basis:
 ```python
 from nomad import *
 
+n_occ, n_virt = 2, 3
 occ = domain("occ", size=n_occ)
 virt = domain("virt", size=n_virt, start=n_occ)
 
