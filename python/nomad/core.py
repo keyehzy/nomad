@@ -18,6 +18,8 @@ from typing import Any, cast
 Number = int | float | Fraction
 IndexKey = tuple[Any, ...]
 FiniteValues = range | tuple[int, ...]
+# Per-index charge metadata: a name->value mapping or an iterable of such pairs.
+IndexCharges = Mapping[str, int] | Iterable[tuple[str, int]]
 
 
 def _validate_int(value: Any, what: str) -> int:
@@ -103,12 +105,7 @@ def _coerce_charge_spec(
             raise ValueError(
                 f"Charge {name!r} mapping specifications must contain a 'values' entry"
             )
-        modulus = spec.get("modulus")
-        if "mod" in spec:
-            if modulus is not None and modulus != spec["mod"]:
-                raise ValueError(f"Charge {name!r} has conflicting 'modulus' and 'mod' values")
-            modulus = spec["mod"]
-        out = Charge(tuple(spec["values"]), modulus=modulus)
+        out = Charge(tuple(spec["values"]), modulus=spec.get("modulus"))
     elif (
         isinstance(spec, tuple)
         and len(spec) == 2
@@ -480,7 +477,7 @@ def index(
     *,
     spin_z2: int | None = None,
     momentum: int | None = None,
-    charges: Mapping[str, int] | None = None,
+    charges: IndexCharges | None = None,
 ) -> Index:
     """Create a single symbolic index.
 
@@ -505,7 +502,7 @@ def indices(
     *,
     spin_z2: int | None = None,
     momentum: int | None = None,
-    charges: Mapping[str, int] | None = None,
+    charges: IndexCharges | None = None,
 ) -> tuple[Index, ...]:
     """Create a tuple of symbolic indices.
 
@@ -526,7 +523,7 @@ def spin_index(
     spin_z2: int | None = None,
     *,
     domain: Domain | str | None = None,
-    charges: Mapping[str, int] | None = None,
+    charges: IndexCharges | None = None,
 ) -> Index:
     """Create an index carrying optional ``2*S_z`` metadata."""
 
@@ -2025,6 +2022,17 @@ def compile(  # noqa: A001 - public API intentionally named compile
     tensor_values: Mapping[str, Any] | None = None,
     domains: Mapping[str, Any] | None = None,
 ) -> Any:
+    """Compile an expression into an executable sparse operator.
+
+    ``sector`` / ``charges`` restrict the operator to an additive-charge sector
+    (see :func:`basis_sector`).  Compiling into a sector *projects* onto it:
+    terms that do not conserve the sector's charges connect different sectors
+    and are pruned, so e.g. a number-non-conserving operator compiled into a
+    fixed-``N`` sector keeps only its number-conserving block.  Pass an explicit
+    ``basis=...`` to supply a precomputed determinant list instead of deriving
+    it from the sector.
+    """
+
     if target != "sparse":
         raise NotImplementedError("NOMAD executable backend is target='sparse'")
     if n_orbitals is None:

@@ -309,6 +309,12 @@ def test_index_charges_alias_legacy_spin_and_momentum_fields():
     assert pi == index("p", charges={"Sz2": 1, "K": 2})
 
 
+def test_index_charges_accepts_iterable_of_pairs():
+    # charges= also accepts an iterable of (name, value) pairs, equivalent to the
+    # mapping form.
+    assert index("p", charges=[("K", 2), ("Sz2", 1)]) == index("p", charges={"Sz2": 1, "K": 2})
+
+
 def test_index_rejects_conflicting_legacy_and_charge_metadata():
     with pytest.raises(ValueError, match="conflicts"):
         index("p", spin_z2=1, charges={"Sz2": -1})

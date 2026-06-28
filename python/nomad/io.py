@@ -65,7 +65,7 @@ def dumps_json(expr: Any) -> str:
         if summed_domains:
             item["summed_domains"] = summed_domains
         summed_charges = {
-            str(i): dict(_index_charge_items(i)) for i in t.summed if _index_charge_items(i)
+            str(i): dict(items) for i in t.summed if (items := _index_charge_items(i))
         }
         if summed_charges:
             item["summed_charges"] = summed_charges
