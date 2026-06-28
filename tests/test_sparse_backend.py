@@ -70,6 +70,42 @@ def test_typed_domain_tensor_values_use_domain_local_axes():
     assert coeffs == {(2, 0): 10, (2, 1): 11, (3, 0): 20, (3, 1): 21}
 
 
+def test_typed_domain_mapping_tensor_values_use_domain_local_keys():
+    occ = domain("occ", size=2)
+    virt = domain("virt", size=2, start=2)
+    i = index("i", occ)
+    av = index("a", virt)
+    t = tensor("t", [av, i])
+
+    # A Mapping is keyed by domain-local coordinates, exactly like the array
+    # and callable forms -- not by the global orbital labels (2, 3).
+    expanded = expand_sums(
+        sum_(av, i, t[av, i] * adag(av) * a(i)),
+        n_orbitals=4,
+        tensor_values={"t": {(0, 0): 10, (0, 1): 11, (1, 0): 20, (1, 1): 21}},
+    )
+    coeffs = {
+        (term.ops[0].mode.value, term.ops[1].mode.value): int(term.coeff)
+        for term in expanded.terms
+    }
+    assert coeffs == {(2, 0): 10, (2, 1): 11, (3, 0): 20, (3, 1): 21}
+
+
+def test_typed_domain_mapping_tensor_values_reject_global_keys():
+    virt = domain("virt", size=2, start=2)
+    av = index("a", virt)
+    t = tensor("t", [av])
+
+    # Keying by the global labels (2, 3) instead of the local (0, 1) is a user
+    # mistake that must surface, not be silently papered over by a fallback.
+    with pytest.raises(KeyError):
+        expand_sums(
+            sum_(av, t[av] * adag(av)),
+            n_orbitals=4,
+            tensor_values={"t": {(2,): 1, (3,): 2}},
+        )
+
+
 def test_string_domain_can_be_made_finite_with_size_override():
     i, j = indices("i j", domain="occ")
     expanded = expand_sums(sum_(i, j, adag(i) * a(j)), domains={"occ": 2})

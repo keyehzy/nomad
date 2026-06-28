@@ -1160,19 +1160,15 @@ def _tensor_axis_value(port: Mode) -> int:
 
 
 def _eval_tensor_value(values: Any, ports: tuple[Mode, ...]) -> Fraction:
+    # Tensor axes are domain-local: every index addresses the tensor by its
+    # domain-local coordinate, never its global orbital label.  The callable,
+    # mapping, and nested-sequence backends all honour this single contract
+    # (``_tensor_axis_value`` rejects symbolic ports up front).
     idx = tuple(_tensor_axis_value(p) for p in ports)
-    global_idx = tuple(p.value for p in ports if isinstance(p, Orbital))
-    if len(global_idx) != len(ports):
-        raise ValueError("Cannot evaluate tensor with symbolic ports")
     if callable(values):
         val = values(*idx)
     elif isinstance(values, Mapping):
-        try:
-            val = values[idx]
-        except KeyError:
-            if global_idx == idx:
-                raise
-            val = values[global_idx]
+        val = values[idx]
     else:
         val = values
         for i in idx:
