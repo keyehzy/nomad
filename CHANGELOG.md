@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonical bound dummies. Constructing a free index with such a name
   (e.g. `Index("_0")` or `index("_0")`) raises `ValueError`, so a free index can
   no longer visually collide with a rendered bound dummy.
+- Index metadata (`spin_z2`, `momentum`) now participates in an index's
+  structural identity. Two free indices that share a display name but differ in
+  metadata (e.g. `index("p")` vs `spin_index("p", spin_z2=1)`) are now distinct
+  modes — previously they compared equal. As a consequence, `sum_` binds by
+  structural identity, so a binder only captures body occurrences whose metadata
+  matches. Note such indices still *render* by name alone, so they can look
+  identical in `text`/`latex`/`dumps_json` output.
 
 ### Fixed
 - `sum_` bound indices are now hygienic. Each bound summation index carries a

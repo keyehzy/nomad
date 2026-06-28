@@ -1,4 +1,23 @@
+import json
+
 from nomad import *
+from nomad.io import dumps_json
+
+
+def test_json_export_serializes_summed_indices_by_display_name():
+    p, q = indices("p q")
+    h = tensor("h", [p, q], hermitian=True)
+    expr = sum_(p, q, h[p, q] * adag(p) * a(q))
+    payload = json.loads(dumps_json(expr))
+    (term,) = payload["terms"]
+    # Bound dummies serialize by their canonical display name, consistently
+    # across the summed list, the tensor ports, and the operator modes.
+    assert term["summed"] == ["_0", "_1"]
+    assert term["tensors"] == [{"symbol": "h", "ports": ["_0", "_1"]}]
+    assert term["ops"] == [
+        {"kind": "create", "mode": "_0"},
+        {"kind": "destroy", "mode": "_1"},
+    ]
 
 
 def test_latex_export_for_one_body_sum():

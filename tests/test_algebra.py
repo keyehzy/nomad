@@ -99,6 +99,30 @@ def test_reserved_dummy_namespace_rejects_free_indices():
     assert text(sum_(p, adag(p))) == "Σ__0 a†(_0)"
 
 
+def test_free_indices_differing_only_in_metadata_are_distinct():
+    # Index metadata participates in structural identity: two free indices that
+    # share a display name but differ in metadata are distinct modes. They still
+    # render by name alone, so text() aliases them -- structure does not.
+    p = index("p")
+    p_up = spin_index("p", spin_z2=1)
+    assert p != p_up
+    expr = (adag(p_up) * a(p)).simplify()
+    create_mode, destroy_mode = expr.terms[0].ops[0].mode, expr.terms[0].ops[1].mode
+    assert create_mode != destroy_mode
+    assert text(expr) == "a†(p) a(p)"  # display aliases; identity does not
+
+
+def test_sum_capture_requires_matching_index_metadata():
+    # sum_ binds by structural identity, so a binder only captures body
+    # occurrences whose metadata matches. A bare binder does not capture a
+    # spin-typed body index, leaving it free (and the unused dummy is dropped).
+    p = index("p")
+    p_up = spin_index("p", spin_z2=1)
+    assert text(sum_(p, adag(p_up))) == "a†(p)"
+    # Matching metadata captures and renders as a canonical dummy.
+    assert text(sum_(p_up, adag(p_up))) == "Σ__0 a†(_0)"
+
+
 def test_tensor_antisymmetric_pair_canonicalization():
     p, q = indices("p q")
     g = tensor("g", [p, q], antisymmetric_pairs=[(p, q)])

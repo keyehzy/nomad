@@ -596,10 +596,6 @@ def _node_for_mode(m: Mode) -> tuple[Any, ...]:
     return ("idx", _index_identity(m), m)
 
 
-def _mode_from_node(node: tuple[Any, ...]) -> Mode:
-    return Orbital(int(node[1])) if node[0] == "const" else node[2]
-
-
 def _canonicalize_delta_constraints(term: Term) -> Term | None:
     if not term.deltas:
         return term
@@ -818,6 +814,10 @@ def _canonicalize_term(term: Term) -> Term | None:
     while True:
         key = t.structural_key()
         if key in keys:
+            # At a fixed point the detected cycle has length 1 and ``min`` returns
+            # that point (the common path).  A length >1 cycle is the defensive
+            # case -- not produced by any known input -- where ``min`` collapses
+            # the orbit to a single deterministic representative.
             cycle = history[keys.index(key) :]
             return min(cycle, key=lambda x: x.structural_key())
         history.append(t)
