@@ -59,6 +59,4 @@ def test_json_export_summed_domains_carry_values_and_offset_forms():
 
     si = index("a", domain("virt", size=2, start=2))
     payload = json.loads(dumps_json(sum_(si, adag(si))))
-    assert payload["terms"][0]["summed_domains"] == {
-        "_0": {"name": "virt", "size": 2, "start": 2}
-    }
+    assert payload["terms"][0]["summed_domains"] == {"_0": {"name": "virt", "size": 2, "start": 2}}

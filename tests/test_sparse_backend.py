@@ -82,8 +82,7 @@ def test_typed_domain_tensor_values_use_domain_local_axes():
         tensor_values={"t": [[10, 11], [20, 21]]},
     )
     coeffs = {
-        (term.ops[0].mode.value, term.ops[1].mode.value): int(term.coeff)
-        for term in expanded.terms
+        (term.ops[0].mode.value, term.ops[1].mode.value): int(term.coeff) for term in expanded.terms
     }
     assert coeffs == {(2, 0): 10, (2, 1): 11, (3, 0): 20, (3, 1): 21}
 
@@ -103,8 +102,7 @@ def test_typed_domain_mapping_tensor_values_use_domain_local_keys():
         tensor_values={"t": {(0, 0): 10, (0, 1): 11, (1, 0): 20, (1, 1): 21}},
     )
     coeffs = {
-        (term.ops[0].mode.value, term.ops[1].mode.value): int(term.coeff)
-        for term in expanded.terms
+        (term.ops[0].mode.value, term.ops[1].mode.value): int(term.coeff) for term in expanded.terms
     }
     assert coeffs == {(2, 0): 10, (2, 1): 11, (3, 0): 20, (3, 1): 21}
 

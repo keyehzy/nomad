@@ -60,9 +60,7 @@ class Domain:
         if not self.name or not isinstance(self.name, str):
             raise ValueError("Domain name must be a non-empty string")
         if self.size is not None:
-            object.__setattr__(
-                self, "size", _validate_nonnegative_int(self.size, "Domain size")
-            )
+            object.__setattr__(self, "size", _validate_nonnegative_int(self.size, "Domain size"))
         object.__setattr__(self, "start", _validate_nonnegative_int(self.start, "Domain start"))
         if self.values is not None:
             if self.start != 0:
@@ -1356,9 +1354,7 @@ def expand_sums(
                 _index_identity(index): Orbital(
                     global_value, _index_domain(index), local_value=local_value
                 )
-                for index, (local_value, global_value) in zip(
-                    summed, assignment, strict=True
-                )
+                for index, (local_value, global_value) in zip(summed, assignment, strict=True)
             }
             tensors = []
             coeff = term.coeff
