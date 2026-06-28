@@ -34,7 +34,7 @@ def _coerce_domain_values(values: Iterable[int], *, context: str) -> tuple[int, 
     return out
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Domain:
     """A symbolic index domain with optional finite expansion data.
 
@@ -43,6 +43,12 @@ class Domain:
     ``start .. start + size - 1``) or by an explicit list of global labels.
     During tensor evaluation, axes are indexed by the local position inside the
     domain, while operators use the global orbital label.
+
+    Domain identity is *canonical*: two domains compare equal when they share a
+    name and expand to the same ordered global labels, regardless of whether
+    that mapping was given as ``size``/``start`` or as an explicit ``values``
+    list (see :meth:`key`).  Differently-named or differently-ordered domains
+    stay distinct; a δ between them is resolved at finite expansion instead.
     """
 
     name: str
@@ -77,8 +83,27 @@ class Domain:
         return None
 
     def key(self) -> tuple[Any, ...]:
-        values = self.values
-        return (self.name, self.size, self.start, values)
+        """Canonical, totally-ordered domain identity.
+
+        Identity is the name plus the ordered global labels the domain expands
+        to.  The ``size``/``start`` form and an explicit ``values`` list that
+        produce the *same ordered* labels therefore compare equal, while a
+        not-yet-finite (string/default) domain stays distinct from any finite
+        one.  The tuple contains no ``None`` so terms carrying typed indices
+        remain sortable during canonicalization.
+        """
+        finite = self.finite_values()
+        if finite is None:
+            return (self.name, False, ())
+        return (self.name, True, tuple(finite))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Domain):
+            return NotImplemented
+        return self.key() == other.key()
+
+    def __hash__(self) -> int:
+        return hash(self.key())
 
     def __repr__(self) -> str:  # pragma: no cover - same as str for REPLs
         return self.name

@@ -208,6 +208,37 @@ def test_normal_order_drops_delta_between_disjoint_domains():
     assert term.coeff == -1
 
 
+def test_domains_with_equal_finite_mapping_share_identity():
+    # Same name + same ordered global labels => one domain, however expressed.
+    size_form = domain("occ", size=2)
+    values_form = domain("occ", values=[0, 1])
+    assert size_form == values_form
+    assert hash(size_form) == hash(values_form)
+    assert index("p", size_form) == index("p", values_form)
+
+    # A different local ordering is a genuinely different mapping; a not-yet-finite
+    # (string) domain is distinct from any finite one.
+    assert domain("occ", values=[1, 0]) != size_form
+    assert domain("occ") != size_form
+
+
+def test_equivalent_domain_forms_merge_and_unify_their_delta():
+    # Regression: mixing the size form and the values form of one domain used to
+    # crash simplify() (None vs tuple in the term sort key) and never combined.
+    p_size = index("p", domain("occ", size=2))
+    p_values = index("p", domain("occ", values=[0, 1]))
+    (term,) = (adag(p_size) + adag(p_values)).terms
+    assert term.coeff == 2
+
+    # The two forms share an identity, so a delta between them is consumed
+    # symbolically rather than retained until expansion.
+    i = index("i", domain("occ", size=2))
+    j = index("j", domain("occ", values=[0, 1]))
+    (delta_term,) = sum_(i, j, delta(i, j) * adag(i) * a(j)).terms
+    assert not delta_term.deltas
+    assert len(delta_term.summed) == 1
+
+
 def test_normal_order_keeps_contraction_for_default_domains():
     p, q = indices("p q")
     out = normal_order(sum_(p, q, a(p) * adag(q)))

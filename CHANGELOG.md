@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a ``Domain``, an ``int`` size, or an iterable of orbital labels) for
   not-yet-finite (e.g. string-only) domains, preserves domain
   metadata under hygienic dummy renaming, and evaluates typed tensor values
-  using domain-local axes while operators use global orbital labels.  Supplying
-  an override for an already-finite domain is rejected so a concrete domain's
-  ``start``/``values`` are never silently shadowed by a name collision.
+  using domain-local axes while operators use global orbital labels.  Domain
+  identity is canonical: domains sharing a name and the same ordered global
+  labels compare equal whether written as ``size``/``start`` or as an explicit
+  ``values`` list, so equivalent forms merge (and their δ unifies) rather than
+  being kept distinct.  Supplying an override for an already-finite domain is
+  rejected so a concrete domain's ``start``/``values`` are never silently
+  shadowed by a name collision.
 - Cross-domain delta handling now avoids unsafe symbolic contraction; deltas
   across incompatible finite domains can collapse to zero, while potentially
   overlapping domains are retained until concrete finite expansion.

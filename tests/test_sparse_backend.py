@@ -78,6 +78,16 @@ def test_string_domain_can_be_made_finite_with_size_override():
     assert pairs == [(0, 0), (0, 1), (1, 0), (1, 1)]
 
 
+def test_equivalent_domain_forms_compile_to_same_matrix():
+    # size/start and an equivalent explicit values list are the same domain, so
+    # they must compile to identical operators.
+    i_size = index("i", domain("occ", size=2))
+    i_vals = index("i", domain("occ", values=[0, 1]))
+    m_size = np.array(compile(sum_(i_size, adag(i_size) * a(i_size)), n_orbitals=2).to_dense())
+    m_vals = np.array(compile(sum_(i_vals, adag(i_vals) * a(i_vals)), n_orbitals=2).to_dense())
+    assert np.allclose(m_size, m_vals)
+
+
 def test_typed_domain_compiles_to_same_matrix_as_explicit_orbitals():
     occ = domain("occ", size=2)
     i = index("i", occ)
