@@ -1177,6 +1177,28 @@ def _points_from_domain_spec(name: str, spec: Any) -> tuple[tuple[int, int], ...
     return _points_from_values(spec, context=f"Domain override {name!r}")
 
 
+def _override_points_for(
+    name: str,
+    *,
+    domains: Mapping[str, Any] | None,
+    domain_sizes: Mapping[str, int] | None,
+    domain_values: Mapping[str, Iterable[int]] | None,
+) -> tuple[tuple[int, int], ...] | None:
+    """Resolve an expansion-time override for ``name``, if one is supplied.
+
+    Precedence is ``domain_values`` > ``domains`` > ``domain_sizes``.  Returns
+    ``None`` when no override map mentions ``name``.
+    """
+
+    if domain_values is not None and name in domain_values:
+        return _points_from_values(domain_values[name], context=f"Domain values for {name!r}")
+    if domains is not None and name in domains:
+        return _points_from_domain_spec(name, domains[name])
+    if domain_sizes is not None and name in domain_sizes:
+        return _points_from_size(domain_sizes[name])
+    return None
+
+
 def _domain_expansion_points(
     value: Domain,
     *,
@@ -1185,29 +1207,35 @@ def _domain_expansion_points(
     domain_sizes: Mapping[str, int] | None,
     domain_values: Mapping[str, Iterable[int]] | None,
 ) -> tuple[tuple[int, int], ...]:
-    points: tuple[tuple[int, int], ...] | None = None
-    if domain_values is not None and value.name in domain_values:
-        points = _points_from_values(
-            domain_values[value.name], context=f"Domain values for {value.name!r}"
-        )
-    elif domains is not None and value.name in domains:
-        points = _points_from_domain_spec(value.name, domains[value.name])
-    elif domain_sizes is not None and value.name in domain_sizes:
-        points = _points_from_size(domain_sizes[value.name])
-    else:
-        finite = value.finite_values()
-        if finite is not None:
-            points = _points_from_values(finite, context=f"Domain {value.name!r}")
-        elif _is_default_spin_orbital_domain(value):
-            if n_orbitals is None:
-                raise ValueError("n_orbitals is required to expand spin_orbital sums")
-            points = _points_from_size(n_orbitals)
-        else:
+    override = _override_points_for(
+        value.name,
+        domains=domains,
+        domain_sizes=domain_sizes,
+        domain_values=domain_values,
+    )
+    own = value.finite_values()
+    if own is not None:
+        # A concrete domain already fixes its own orbital labels.  Matching an
+        # override by name would silently discard the domain's start/values, so
+        # reject the conflict rather than shadow it.
+        if override is not None:
             raise ValueError(
-                f"Domain {value.name!r} has no finite size or values; pass "
-                "domain(..., size=...), domain(..., values=...), or an expand_sums "
-                "domain override"
+                f"Domain {value.name!r} is already finite; drop the expand_sums "
+                f"override for {value.name!r} or give the domain a distinct name"
             )
+        points = _points_from_values(own, context=f"Domain {value.name!r}")
+    elif override is not None:
+        points = override
+    elif _is_default_spin_orbital_domain(value):
+        if n_orbitals is None:
+            raise ValueError("n_orbitals is required to expand spin_orbital sums")
+        points = _points_from_size(n_orbitals)
+    else:
+        raise ValueError(
+            f"Domain {value.name!r} has no finite size or values; pass "
+            "domain(..., size=...), domain(..., values=...), or an expand_sums "
+            "domain override"
+        )
 
     if n_orbitals is not None:
         checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
@@ -1232,8 +1260,12 @@ def expand_sums(
     """Expand symbolic sums over finite index domains.
 
     Untyped/default indices expand over ``range(n_orbitals)``.  Typed indices
-    expand over the finite data carried by their :class:`Domain`, or over an
-    override supplied by domain name.  Tensor factors with concrete ports are
+    expand over the finite data carried by their :class:`Domain`.  A domain that
+    is not yet finite (e.g. a string-only domain name) instead draws its range
+    from an override supplied by domain name via ``domains``/``domain_sizes``/
+    ``domain_values``; supplying an override for an already-finite domain is
+    rejected so a concrete domain's start/values are never silently discarded.
+    Tensor factors with concrete ports are
     evaluated when their symbol appears in ``tensor_values``; for typed domains,
     tensor axes use domain-local coordinates while operators use global orbital
     labels.  Remaining symbolic tensors are preserved; sparse compilation

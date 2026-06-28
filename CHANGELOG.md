@@ -11,9 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Typed index domains via ``Domain``/``domain()`` and ``index``/``indices``
   ``domain=...`` arguments.  Finite expansion now uses domain-specific ranges
-  or values, supports per-call domain overrides, preserves domain metadata under
-  hygienic dummy renaming, and evaluates typed tensor values using domain-local
-  axes while operators use global orbital labels.
+  or values, supports per-call ``domains``/``domain_sizes``/``domain_values``
+  overrides for not-yet-finite (e.g. string-only) domains, preserves domain
+  metadata under hygienic dummy renaming, and evaluates typed tensor values
+  using domain-local axes while operators use global orbital labels.  Supplying
+  an override for an already-finite domain is rejected so a concrete domain's
+  ``start``/``values`` are never silently shadowed by a name collision.
 - Cross-domain delta handling now avoids unsafe symbolic contraction; deltas
   across incompatible finite domains can collapse to zero, while potentially
   overlapping domains are retained until concrete finite expansion.

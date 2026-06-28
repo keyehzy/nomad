@@ -179,3 +179,38 @@ def test_cross_domain_delta_with_disjoint_finite_domains_is_zero():
     av = index("a", virt)
 
     assert not sum_(i, av, delta(i, av) * adag(i) * a(av)).terms
+
+
+def test_cross_domain_delta_with_overlapping_finite_domains_is_retained():
+    occ = domain("occ", values=[0, 1, 2])
+    act = domain("act", values=[1, 2, 3])
+    i = index("i", occ)
+    av = index("a", act)
+
+    (term,) = sum_(i, av, delta(i, av) * adag(i) * a(av)).terms
+    # Domains may overlap, so the delta cannot be consumed symbolically: both
+    # dummies remain bound and the constraint is kept for finite expansion.
+    assert len(term.deltas) == 1
+    assert len(term.summed) == 2
+
+
+def test_normal_order_drops_delta_between_disjoint_domains():
+    occ = domain("occ", size=2)
+    virt = domain("virt", size=2, start=2)
+    i = index("i", occ)
+    av = index("a", virt)
+
+    # a_i a†_a normal-orders to δ_ia - a†_a a_i; with disjoint occ/virt domains
+    # the contraction term vanishes, leaving only the swapped product.
+    out = normal_order(sum_(i, av, a(i) * adag(av)))
+    (term,) = out.terms
+    assert not term.deltas
+    assert term.coeff == -1
+
+
+def test_normal_order_keeps_contraction_for_default_domains():
+    p, q = indices("p q")
+    out = normal_order(sum_(p, q, a(p) * adag(q)))
+    # Default spin-orbital indices may coincide, so the δ contraction survives
+    # as a constant term alongside the swapped product.
+    assert any(not term.ops for term in out.terms)
