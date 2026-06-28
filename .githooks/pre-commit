@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# Pre-commit hook mirroring CI's "Lint & type-check" job
+# (.github/workflows/ci.yml) plus the test suite, so a commit can't introduce a
+# failure that CI would catch later.
+#
+# Staged Python files are auto-formatted with ruff and re-staged, so formatting
+# is fixed for you automatically. Lint, types, and tests then run as gates: any
+# failure aborts the commit and prints the offending rule/error. Use
+# `git commit --no-verify` to bypass for WIP.
+#
+# Activate once per clone:
+#     git config core.hooksPath .githooks
+#
+set -eu
+
+# Prefer the project's pinned tools via uv so versions match CI; fall back to
+# whatever ruff/mypy/pytest are on PATH for environments without uv.
+run() {
+  if command -v uv >/dev/null 2>&1; then
+    uv run "$@"
+  else
+    "$@"
+  fi
+}
+
+# Auto-format and re-stage the Python files going into this commit. (Filenames
+# with spaces are not supported by the word-split below; none exist here.)
+staged_py=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+if [ -n "$staged_py" ]; then
+  echo "pre-commit: ruff format (staged files)"
+  # shellcheck disable=SC2086
+  run ruff format -- $staged_py
+  # shellcheck disable=SC2086
+  git add -- $staged_py
+fi
+
+# Gates over the whole project, exactly like CI.
+echo "pre-commit: ruff check"
+run ruff check .
+echo "pre-commit: mypy"
+run mypy
+echo "pre-commit: pytest"
+run pytest
