@@ -75,6 +75,10 @@ String-only domains such as ``indices("i j", domain="occ")`` can be made finite
 at expansion time with ``domains={"occ": n_occ}`` (an ``int`` size),
 ``domains={"occ": [0, 2, 5]}`` (explicit orbital labels), or
 ``domains={"occ": domain("occ", size=n_occ, start=...)}`` (a full ``Domain``).
+The override is matched by the ``domains`` key, so when it is a ``Domain`` only
+its range/values are used and its own name is ignored. An override for an
+already-finite domain — or for the default ``spin_orbital`` basis, which is sized
+by ``n_orbitals`` — is rejected rather than silently applied.
 
 ## Architecture
 

@@ -1276,12 +1276,22 @@ def _domain_expansion_points(
                 f"override for {value.name!r} or give the domain a distinct name"
             )
         points = _points_from_values(own, context=f"Domain {value.name!r}")
-    elif override is not None:
-        points = override
     elif _is_default_spin_orbital_domain(value):
+        # The default basis is sized by n_orbitals, never by a domains override;
+        # accepting one here would silently shrink a default sum out from under
+        # n_orbitals.  Reject it for the same reason an already-finite domain
+        # rejects a name collision above.
+        if override is not None:
+            raise ValueError(
+                "the default spin_orbital domain is sized by n_orbitals, not by an "
+                "expand_sums override; drop domains['spin_orbital'] or give the index "
+                "a named domain"
+            )
         if n_orbitals is None:
             raise ValueError("n_orbitals is required to expand spin_orbital sums")
         points = _points_from_size(n_orbitals)
+    elif override is not None:
+        points = override
     else:
         raise ValueError(
             f"Domain {value.name!r} has no finite size or values; pass "
@@ -1313,9 +1323,12 @@ def expand_sums(
     expand over the finite data carried by their :class:`Domain`.  A domain that
     is not yet finite (e.g. a string-only domain name) instead draws its range
     from an override supplied by domain name via ``domains``, whose values may be
-    a :class:`Domain`, an ``int`` size, or an iterable of orbital labels;
-    supplying an override for an already-finite domain is rejected so a concrete
-    domain's start/values are never silently discarded.
+    a :class:`Domain`, an ``int`` size, or an iterable of orbital labels.  An
+    override is matched purely by the ``domains`` key (the index's domain name);
+    when it is a :class:`Domain`, only its finite range/values are used and its
+    own ``name`` is ignored.  Supplying an override for an already-finite domain
+    -- or for the default ``spin_orbital`` basis, which is sized by ``n_orbitals``
+    -- is rejected so a domain's start/values are never silently discarded.
     Tensor factors with concrete ports are
     evaluated when their symbol appears in ``tensor_values``; for typed domains,
     tensor axes use domain-local coordinates while operators use global orbital

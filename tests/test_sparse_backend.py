@@ -301,6 +301,24 @@ def test_override_for_already_finite_domain_is_rejected():
         expand_sums(sum_(av, adag(av)), n_orbitals=4, domains={"virt": 2})
 
 
+def test_default_spin_orbital_override_is_rejected():
+    # The default basis is sized by n_orbitals; a domains override keyed
+    # "spin_orbital" must not silently shrink a default sum out from under it.
+    p = index("p")
+    with pytest.raises(ValueError, match="spin_orbital"):
+        expand_sums(sum_(p, adag(p)), n_orbitals=4, domains={"spin_orbital": 2})
+
+
+def test_override_domain_spec_is_matched_by_key_not_its_own_name():
+    # A Domain override is matched by the domains key (the index's domain name);
+    # only its finite range/values are used, so its own name need not match.
+    i = index("i", "occ")
+    expanded = expand_sums(
+        sum_(i, adag(i)), n_orbitals=8, domains={"occ": domain("ignored", size=2, start=4)}
+    )
+    assert sorted(term.ops[0].mode.value for term in expanded.terms) == [4, 5]
+
+
 def test_domain_orbital_outside_n_orbitals_is_rejected():
     band = index("i", "band")
     with pytest.raises(ValueError, match="outside"):
