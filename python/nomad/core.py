@@ -334,10 +334,6 @@ def _coerce_summed_index(value: Index | str) -> Index:
     raise TypeError("Summed indices must be Index objects or legacy string names")
 
 
-def _optional_key(value: int | None) -> tuple[int, int]:
-    return (0, 0) if value is None else (1, int(value))
-
-
 def _index_charge_items(index: Index) -> tuple[tuple[str, int], ...]:
     # ``Index.__post_init__`` canonicalizes the public constructor's flexible
     # ``charges`` input into this exact tuple shape.  The cast keeps the runtime
@@ -1574,8 +1570,9 @@ def prune_by_charge(
     The legacy call ``prune_by_charge(expr)`` keeps only particle-number
     conserving terms (``ΔN = 0``).  General sectors can be requested with
     ``target={...}`` or ``conserve=[...]``; those names require zero term delta.
-    Use ``delta={"Q": q}`` for a non-zero required delta and ``delta_n=None`` to
-    disable the legacy particle-number default.
+    Use ``delta={"Q": q}`` for a non-zero required delta.  ``delta_n`` defaults
+    to ``0``, so particle number is conserved alongside any ``target`` /
+    ``conserve`` names unless ``delta_n=None`` is passed to drop that default.
 
     A term with an unknown symbolic delta is kept.  It will be pruned later once
     indices are expanded to concrete orbitals, or retained if the violation
