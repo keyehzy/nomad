@@ -383,18 +383,16 @@ def as_expr(value: Any) -> Expr:
     raise TypeError(f"Cannot convert {type(value)!r} to NOMAD Expr")
 
 
-def _substitute_mode(m: Mode, subst: Mapping[Any, Mode]) -> Mode:
+def _substitute_mode(m: Mode, subst: Mapping[IndexKey, Mode]) -> Mode:
     if isinstance(m, Index):
         ident = _index_identity(m)
         if ident in subst:
             return subst[ident]
-        if m in subst:
-            return subst[m]
     return m
 
 
 def _replace_term_modes(
-    term: Term, subst: Mapping[Any, Mode], *, replace_summed: bool = True
+    term: Term, subst: Mapping[IndexKey, Mode], *, replace_summed: bool = True
 ) -> Term:
     tensors = tuple(
         TensorFactor(t.symbol, tuple(_substitute_mode(p, subst) for p in t.ports))
