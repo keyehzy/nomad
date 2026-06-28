@@ -1901,8 +1901,9 @@ def basis_sector(
     """Generate a determinant basis in an additive-charge sector.
 
     ``charges`` maps each conserved quantity name to per-orbital additive
-    values.  A value may be a plain sequence, a :class:`Charge`, or a mapping
-    like ``{"values": [...], "modulus": L}``.  ``target`` selects the sector;
+    values.  A value may be a plain sequence, a :class:`Charge`, a
+    ``(values, modulus)`` pair, or a mapping like
+    ``{"values": [...], "modulus": L}``.  ``target`` selects the sector;
     only target names are filtered.  ``N`` defaults to one particle per occupied
     orbital, and the legacy ``Sz2`` sector defaults to alternating ``(+1, -1)``
     spin labels when no explicit charge vector is supplied.

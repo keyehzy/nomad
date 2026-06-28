@@ -98,6 +98,12 @@ def test_basis_sector_accepts_mapping_charge_specification():
     assert spec == basis_sector(4, charges={"K": charge([0, 1, 2, 3], modulus=4)}, target={"K": 1})
 
 
+def test_basis_sector_accepts_tuple_charge_specification():
+    # The (values, modulus) pair form is equivalent to charge(values, modulus=...).
+    spec = basis_sector(4, charges={"K": ([0, 1, 2, 3], 4)}, target={"K": 1})
+    assert spec == basis_sector(4, charges={"K": charge([0, 1, 2, 3], modulus=4)}, target={"K": 1})
+
+
 # ---------------------------------------------------------------------------
 # determinant_charges
 # ---------------------------------------------------------------------------
