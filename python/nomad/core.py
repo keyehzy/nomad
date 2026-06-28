@@ -8,7 +8,7 @@ may rewrite one term into many terms.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import count, product
@@ -428,8 +428,9 @@ def _ensure_bound_index_identities(term: Term) -> Term:
             continue
         key = _index_identity(index)
         if key not in subst:
-            used = {_index_identity(i) for i in subst.values() if isinstance(i, Index)}
-            fresh = _fresh_bound_index_like(index, avoid=occupied | used)
+            # `occupied` already tracks every fresh identity assigned below, so
+            # it alone is a sufficient avoid-set (no need to re-scan `subst`).
+            fresh = _fresh_bound_index_like(index, avoid=occupied)
             subst[key] = fresh
             occupied.add(_index_identity(fresh))
     if not subst:
@@ -863,20 +864,6 @@ def prune_by_charge(expr: Any, *, delta_n: int = 0) -> Expr:
 # ---------------------------------------------------------------------------
 # Finite expansion, determinant backend, and exports
 # ---------------------------------------------------------------------------
-
-
-def _all_indices_in_mode_order(term: Term) -> Iterator[str]:
-    for t in term.tensors:
-        for p in t.ports:
-            if isinstance(p, Index):
-                yield p.name
-    for o in term.ops:
-        if isinstance(o.mode, Index):
-            yield o.mode.name
-    for d in term.deltas:
-        for p in (d.left, d.right):
-            if isinstance(p, Index):
-                yield p.name
 
 
 def _eval_tensor_value(values: Any, ports: tuple[Mode, ...]) -> Fraction:
