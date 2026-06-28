@@ -151,3 +151,145 @@ def test_index_and_indices_constructors():
     # index() rejects multiple names
     with pytest.raises(ValueError):
         index("p q")
+
+
+def test_typed_index_domain_constructors_and_rendering():
+    occ = domain("occ", size=2)
+    virt = domain("virt", size=2, start=2)
+    i, j = indices("i j", domain=occ)
+    av = index("a", virt)
+    p = index("p")
+
+    assert isinstance(occ, Domain)
+    assert i.domain == occ
+    assert av.domain == virt
+    assert p.domain.name == "spin_orbital"
+    assert i != index("i", virt)
+
+    rendered = text(sum_(i, av, adag(av) * a(i)))
+    assert "∈occ" in rendered
+    assert "∈virt" in rendered
+    assert text(sum_(i, j, delta(i, j) * adag(i) * a(j))) == "Σ__0∈occ a†(_0) a(_0)"
+
+
+def test_cross_domain_delta_with_disjoint_finite_domains_is_zero():
+    occ = domain("occ", values=[0, 1])
+    virt = domain("virt", values=[2, 3])
+    i = index("i", occ)
+    av = index("a", virt)
+
+    assert not sum_(i, av, delta(i, av) * adag(i) * a(av)).terms
+
+
+def test_cross_domain_delta_with_overlapping_finite_domains_is_retained():
+    occ = domain("occ", values=[0, 1, 2])
+    act = domain("act", values=[1, 2, 3])
+    i = index("i", occ)
+    av = index("a", act)
+
+    (term,) = sum_(i, av, delta(i, av) * adag(i) * a(av)).terms
+    # Domains may overlap, so the delta cannot be consumed symbolically: both
+    # dummies remain bound and the constraint is kept for finite expansion.
+    assert len(term.deltas) == 1
+    assert len(term.summed) == 2
+
+
+def test_delta_pins_typed_index_to_an_in_domain_orbital():
+    # _delta_action's Index/Orbital branch: a delta tying a typed dummy to a
+    # concrete label that lies inside its finite domain is consumable -- the
+    # dummy is pinned to that orbital and both the delta and the sum vanish.
+    occ = domain("occ", size=2)  # globals {0, 1}
+    i = index("i", occ)
+
+    (term,) = sum_(i, delta(i, 1) * adag(i) * a(i)).terms
+    assert not term.deltas
+    assert not term.summed
+    assert [o.mode.value for o in term.ops] == [1, 1]
+    assert text(sum_(i, delta(i, 1) * adag(i) * a(i))) == "a†(1) a(1)"
+
+
+def test_delta_between_typed_index_and_out_of_domain_orbital_is_zero():
+    # The mirror case: the label 5 is not in occ {0, 1}, so the constraint can
+    # never be satisfied and the whole term collapses to zero.
+    occ = domain("occ", size=2)
+    i = index("i", occ)
+
+    assert not sum_(i, delta(i, 5) * adag(i) * a(i)).terms
+
+
+def test_normal_order_drops_delta_between_disjoint_domains():
+    occ = domain("occ", size=2)
+    virt = domain("virt", size=2, start=2)
+    i = index("i", occ)
+    av = index("a", virt)
+
+    # a_i a†_a normal-orders to δ_ia - a†_a a_i; with disjoint occ/virt domains
+    # the contraction term vanishes, leaving only the swapped product.
+    out = normal_order(sum_(i, av, a(i) * adag(av)))
+    (term,) = out.terms
+    assert not term.deltas
+    assert term.coeff == -1
+
+
+def test_domains_with_equal_finite_mapping_share_identity():
+    # Same name + same ordered global labels => one domain, however expressed.
+    size_form = domain("occ", size=2)
+    values_form = domain("occ", values=[0, 1])
+    assert size_form == values_form
+    assert hash(size_form) == hash(values_form)
+    assert index("p", size_form) == index("p", values_form)
+
+    # A different local ordering is a genuinely different mapping; a not-yet-finite
+    # (string) domain is distinct from any finite one.
+    assert domain("occ", values=[1, 0]) != size_form
+    assert domain("occ") != size_form
+
+
+def test_equivalent_domain_forms_merge_and_unify_their_delta():
+    # Regression: mixing the size form and the values form of one domain used to
+    # crash simplify() (None vs tuple in the term sort key) and never combined.
+    p_size = index("p", domain("occ", size=2))
+    p_values = index("p", domain("occ", values=[0, 1]))
+    (term,) = (adag(p_size) + adag(p_values)).terms
+    assert term.coeff == 2
+
+    # The two forms share an identity, so a delta between them is consumed
+    # symbolically rather than retained until expansion.
+    i = index("i", domain("occ", size=2))
+    j = index("j", domain("occ", values=[0, 1]))
+    (delta_term,) = sum_(i, j, delta(i, j) * adag(i) * a(j)).terms
+    assert not delta_term.deltas
+    assert len(delta_term.summed) == 1
+
+
+def test_retained_cross_domain_delta_reduces_to_a_fixed_point():
+    # Regression: a retained cross-domain delta between two summed dummies can
+    # become consumable on a *later* canonicalization pass, once a sibling delta
+    # pins one of its endpoints to a constant. The <=1-dummy fast path in
+    # _canonicalize_term used to return before that second pass, so simplify()
+    # stopped being idempotent and == reported equal expressions as distinct.
+    occ = domain("occ", values=[0, 1, 2])
+    act = domain("act", values=[1, 2, 3])  # overlaps occ on {1, 2}
+    i = index("i", occ)
+    j = index("j", act)
+    t = tensor("t", [j])
+
+    # δ(i,j) is retained (overlapping domains); δ(i,1) pins i=1, after which
+    # δ(1,j) is unifiable and pins j=1, leaving t[1] with no sum and no delta.
+    stuck = sum_(i, j, delta(i, j) * delta(i, 1) * t[j])
+    reduced = sum_(j, delta(1, j) * t[j])  # the same operator, written reduced
+
+    assert stuck == stuck.simplify()  # simplify() is idempotent
+    assert stuck == reduced  # and == treats the two forms as equal
+    (term,) = stuck.terms
+    assert not term.summed
+    assert not term.deltas
+    assert [p.value for p in term.tensors[0].ports] == [1]  # pinned to global orbital 1
+
+
+def test_normal_order_keeps_contraction_for_default_domains():
+    p, q = indices("p q")
+    out = normal_order(sum_(p, q, a(p) * adag(q)))
+    # Default spin-orbital indices may coincide, so the δ contraction survives
+    # as a constant term alongside the swapped product.
+    assert any(not term.ops for term in out.terms)
