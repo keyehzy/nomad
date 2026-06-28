@@ -1076,18 +1076,25 @@ def _canonicalize_term(term: Term) -> Term | None:
     loop records history only so a (so-far unobserved) cycle resolves to a
     deterministic representative instead of spinning forever.
 
-    Terms with at most one bound dummy take a fast path: a bound dummy always
-    sorts ahead of any free index or orbital regardless of its uid (bound mode
-    keys are ``(1, 0, ...)`` < free ``(1, 1, ...)``), so reordering under
-    relabeling needs >=2 dummies sharing a same-kind operator run or an
-    antisymmetric tensor pair.  Below that threshold the first pass is already a
-    fixed point, so the (common) zero-/one-dummy case skips the re-runs.
+    Terms with at most one bound dummy *and no surviving deltas* take a fast
+    path: a bound dummy always sorts ahead of any free index or orbital
+    regardless of its uid (bound mode keys are ``(1, 0, ...)`` < free
+    ``(1, 1, ...)``), so reordering under relabeling needs >=2 dummies sharing a
+    same-kind operator run or an antisymmetric tensor pair.  A leftover delta is
+    the other way one pass can fall short of a fixed point: a retained
+    cross-domain delta between summed dummies can become consumable on the next
+    pass once a sibling delta pins one of its endpoints to a constant (e.g.
+    ``δ(i,j) δ(i,1)`` over overlapping domains pins ``i=1``, exposing ``δ(1,j)``
+    for the following pass).  So the fast path must not fire while any delta
+    survives, even with a single dummy.  With neither condition present the
+    first pass is already a fixed point, so the (common) zero-/one-dummy,
+    delta-free case skips the re-runs.
     """
 
     t = _canonicalize_term_once(term)
     if t is None:
         return None
-    if len(t.summed) <= 1:
+    if len(t.summed) <= 1 and not t.deltas:
         return t
     history: list[Term] = []
     keys: list[tuple[Any, ...]] = []

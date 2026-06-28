@@ -262,6 +262,31 @@ def test_equivalent_domain_forms_merge_and_unify_their_delta():
     assert len(delta_term.summed) == 1
 
 
+def test_retained_cross_domain_delta_reduces_to_a_fixed_point():
+    # Regression: a retained cross-domain delta between two summed dummies can
+    # become consumable on a *later* canonicalization pass, once a sibling delta
+    # pins one of its endpoints to a constant. The <=1-dummy fast path in
+    # _canonicalize_term used to return before that second pass, so simplify()
+    # stopped being idempotent and == reported equal expressions as distinct.
+    occ = domain("occ", values=[0, 1, 2])
+    act = domain("act", values=[1, 2, 3])  # overlaps occ on {1, 2}
+    i = index("i", occ)
+    j = index("j", act)
+    t = tensor("t", [j])
+
+    # δ(i,j) is retained (overlapping domains); δ(i,1) pins i=1, after which
+    # δ(1,j) is unifiable and pins j=1, leaving t[1] with no sum and no delta.
+    stuck = sum_(i, j, delta(i, j) * delta(i, 1) * t[j])
+    reduced = sum_(j, delta(1, j) * t[j])  # the same operator, written reduced
+
+    assert stuck == stuck.simplify()  # simplify() is idempotent
+    assert stuck == reduced  # and == treats the two forms as equal
+    (term,) = stuck.terms
+    assert not term.summed
+    assert not term.deltas
+    assert [str(p) for p in term.tensors[0].ports] == ["1"]
+
+
 def test_normal_order_keeps_contraction_for_default_domains():
     p, q = indices("p q")
     out = normal_order(sum_(p, q, a(p) * adag(q)))
