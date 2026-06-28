@@ -194,6 +194,29 @@ def test_cross_domain_delta_with_overlapping_finite_domains_is_retained():
     assert len(term.summed) == 2
 
 
+def test_delta_pins_typed_index_to_an_in_domain_orbital():
+    # _delta_action's Index/Orbital branch: a delta tying a typed dummy to a
+    # concrete label that lies inside its finite domain is consumable -- the
+    # dummy is pinned to that orbital and both the delta and the sum vanish.
+    occ = domain("occ", size=2)  # globals {0, 1}
+    i = index("i", occ)
+
+    (term,) = sum_(i, delta(i, 1) * adag(i) * a(i)).terms
+    assert not term.deltas
+    assert not term.summed
+    assert [o.mode.value for o in term.ops] == [1, 1]
+    assert text(sum_(i, delta(i, 1) * adag(i) * a(i))) == "a†(1) a(1)"
+
+
+def test_delta_between_typed_index_and_out_of_domain_orbital_is_zero():
+    # The mirror case: the label 5 is not in occ {0, 1}, so the constraint can
+    # never be satisfied and the whole term collapses to zero.
+    occ = domain("occ", size=2)
+    i = index("i", occ)
+
+    assert not sum_(i, delta(i, 5) * adag(i) * a(i)).terms
+
+
 def test_normal_order_drops_delta_between_disjoint_domains():
     occ = domain("occ", size=2)
     virt = domain("virt", size=2, start=2)

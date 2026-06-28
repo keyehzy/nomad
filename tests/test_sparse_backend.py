@@ -51,6 +51,24 @@ def test_typed_domain_expansion_uses_domain_specific_ranges():
     assert pairs == [(2, 0), (2, 1), (3, 0), (3, 1)]
 
 
+def test_finite_typed_domain_expands_without_n_orbitals():
+    # Headline: n_orbitals is optional once every summed index carries a finite
+    # domain, since each sum already knows its own range. Both the size/start
+    # form and the explicit values form expand on their own.
+    i = index("i", domain("occ", size=2))  # globals {0, 1}
+    assert text(expand_sums(sum_(i, adag(i) * a(i)))) == "a†(0) a(0) + a†(1) a(1)"
+
+    j = index("j", domain("act", values=[1, 3]))
+    assert text(expand_sums(sum_(j, adag(j)))) == "a†(1) + a†(3)"
+
+
+def test_empty_domain_expands_to_zero():
+    # A size-0 domain has no expansion points, so the Cartesian product is empty
+    # and every term carrying that index drops out.
+    empty = index("z", domain("none", size=0))
+    assert not expand_sums(sum_(empty, adag(empty) * a(empty))).terms
+
+
 def test_typed_domain_tensor_values_use_domain_local_axes():
     occ = domain("occ", size=2)
     virt = domain("virt", size=2, start=2)
@@ -181,3 +199,20 @@ def test_domain_orbital_outside_n_orbitals_is_rejected():
     band = index("i", "band")
     with pytest.raises(ValueError, match="outside"):
         expand_sums(sum_(band, adag(band)), n_orbitals=2, domains={"band": [0, 5]})
+
+
+def test_concrete_domain_orbital_outside_n_orbitals_is_rejected():
+    # The n_orbitals upper-bound guard also covers a domain's own finite labels,
+    # not just override-supplied ones: virt = {3, 4} overflows n_orbitals=4.
+    hi = index("a", domain("virt", size=2, start=3))
+    with pytest.raises(ValueError, match="outside"):
+        expand_sums(sum_(hi, adag(hi)), n_orbitals=4)
+
+
+def test_string_domain_without_finite_data_or_override_is_rejected():
+    # A string-only domain is not yet finite; expanding it needs either a
+    # domains= override or the n_orbitals fallback (which only applies to the
+    # default spin_orbital basis). With neither, expansion must refuse.
+    s = index("s", "band")
+    with pytest.raises(ValueError, match="no finite size or values"):
+        expand_sums(sum_(s, adag(s)))
