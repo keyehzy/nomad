@@ -96,3 +96,26 @@ LaTeX / OpenFermion-source / matrix-free determinant backend
 
 The reference runtime in `python/nomad/` is a small, deterministic,
 dependency-light implementation of the core term algebra and determinant kernels.
+
+## Development
+
+Install the tooling and run the same checks CI does:
+
+```bash
+python -m pip install -e ".[test,dev]"
+ruff format .     # auto-format
+ruff check .      # lint
+mypy              # strict type-check
+pytest            # tests
+```
+
+A pre-commit hook that runs these automatically lives in `.githooks/`. Enable it
+once per clone (it is a local Git setting, so cloning alone does not activate it):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook auto-formats staged Python files with `ruff format` and re-stages them,
+then blocks the commit if lint, types, or tests fail. Use `git commit --no-verify`
+to bypass it for work-in-progress commits.
