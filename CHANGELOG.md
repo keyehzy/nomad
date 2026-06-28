@@ -5,6 +5,36 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-28
+
+### Changed
+- **BREAKING:** Index display names of the form `_<digits>` are now reserved for
+  canonical bound dummies. Constructing a free index with such a name raises
+  `ValueError` — whether directly (`Index("_0")`, `index("_0")`) or through any
+  path that coerces a string into a free index (e.g. `adag("_0")`,
+  `delta("_0", q)`, or a string entry in `Term.summed`). A free index can
+  therefore no longer visually collide with a rendered bound dummy.
+- Index metadata (`spin_z2`, `momentum`) now participates in an index's
+  structural identity. Two free indices that share a display name but differ in
+  metadata (e.g. `index("p")` vs `spin_index("p", spin_z2=1)`) are now distinct
+  modes — previously they compared equal. As a consequence, `sum_` binds by
+  structural identity, so a binder only captures body occurrences whose metadata
+  matches. Note such indices still *render* by name alone, so they can look
+  identical in `text`/`latex`/`dumps_json` output.
+
+### Fixed
+- `sum_` bound indices are now hygienic. Each bound summation index carries a
+  hidden, globally-unique identity separate from its human-readable display
+  name, so capture-avoidance and alpha-renaming are structural rather than
+  name-based. Multiplying two independently-bound sums that reuse the same
+  display label (e.g. `sum_(p, adag(p)) * sum_(p, a(p))`) no longer collides
+  them into a single index; they correctly expand as a Cartesian product.
+- Canonicalization now iterates to a fixed point, making `simplify()` idempotent
+  and independent of the order indices are listed in `sum_` for terms with
+  same-kind operator runs (e.g. `a†_p a†_q`) over bound dummies. Previously the
+  canonical dummy renaming ran *after* the sign-bearing operator/tensor sorts,
+  so equality and term de-duplication could depend on that (irrelevant) order.
+
 ## [0.2.0] - 2026-06-27
 
 ### Added
@@ -43,5 +73,6 @@ prototype for fermionic second-quantized algebra.
 - Matrix-free determinant-space sparse backend over bitstring Slater determinants.
 - LaTeX and OpenFermion-source exports.
 
+[0.3.0]: https://github.com/keyehzy/nomad/releases/tag/v0.3.0
 [0.2.0]: https://github.com/keyehzy/nomad/releases/tag/v0.2.0
 [0.1.0]: https://github.com/keyehzy/nomad/releases/tag/v0.1.0
