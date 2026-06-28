@@ -183,6 +183,53 @@ def test_shared_constant_pins_each_domain_to_its_own_local_axis():
     assert int(term.coeff) == 20 * 30  # u@local1 * w@local0
 
 
+def test_symbolic_typed_tensor_keeps_local_axis_across_offset_domains():
+    # Regression: a tensor left symbolic through expand_sums is addressed by its
+    # domain-local axis, so two offset domains that share a global orbital label
+    # at *different* local axes must stay distinct, not merge by global label.
+    # occ-local 1 and virt-local 0 both sit at global orbital 2; the symbolic
+    # port t[1] (occ) and t[0] (virt) must not collapse into a bogus 2*t[2].
+    occ = domain("occ", values=[0, 2])
+    virt = domain("virt", size=2, start=2)
+    i = index("i", occ)
+    av = index("a", virt)
+    t = tensor("t", [i])
+
+    e = expand_sums(sum_(i, t[i] * adag(i)) + sum_(av, t[av] * adag(av)), n_orbitals=4)
+    # Tensor ports render by local axis; operators keep the global label.
+    assert text(e) == "t[0] a†(0) + t[0] a†(2) + t[1] a†(2) + t[1] a†(3)"
+
+    # Operators still merge by global label and numeric evaluation is unchanged:
+    # global orbital 2 sums both local contributions (local 0 -> 10, local 1 -> 20).
+    ev = expand_sums(
+        sum_(i, t[i] * adag(i)) + sum_(av, t[av] * adag(av)),
+        n_orbitals=4,
+        tensor_values={"t": [10, 20]},
+    )
+    assert text(ev) == "10*a†(0) + 30*a†(2) + 20*a†(3)"
+
+
+def test_antisymmetric_typed_tensor_survives_same_global_distinct_local_axes():
+    # Regression: antisymmetric-pair canonicalization compares ports by local
+    # tensor axis, not global label. Two ports on the same global orbital 2 but
+    # different local axes (occ-local 1, virt-local 0) are off-diagonal, so the
+    # factor must NOT vanish -- pre-fix the global labels compared equal and the
+    # whole term was wrongly dropped to zero.
+    occ = domain("occ", values=[0, 2])
+    virt = domain("virt", size=2, start=2)
+    i = index("i", occ)
+    av = index("a", virt)
+    g = tensor("g", [i, av], antisymmetric_pairs=[(0, 1)])
+
+    out = sum_(i, av, delta(i, 2) * delta(av, 2) * g[i, av])
+    (term,) = out.terms
+    assert [p.value for p in term.tensors[0].ports] == [2, 2]  # both global orbital 2
+    # Evaluated against an antisymmetric local-axis array, it gives the
+    # off-diagonal entry A[occ-local 1][virt-local 0] = A[1][0] = -7, not zero.
+    val = expand_sums(out, n_orbitals=4, tensor_values={"g": [[0, 7], [-7, 0]]})
+    assert text(val) == "-7"
+
+
 def test_string_domain_can_be_made_finite_with_size_override():
     i, j = indices("i j", domain="occ")
     expanded = expand_sums(sum_(i, j, adag(i) * a(j)), domains={"occ": 2})

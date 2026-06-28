@@ -287,6 +287,32 @@ def _mode_text(m: Mode) -> str:
     return str(m.value) if isinstance(m, Orbital) else m.name
 
 
+# Tensor axes are domain-local: an expanded ``Orbital`` carrying ``local_value``
+# addresses a tensor by that local coordinate, while operators (and deltas) use
+# the global orbital label.  Keying/rendering tensor ports by the *global* label
+# would conflate distinct local entries of one symbol across offset domains --
+# e.g. occ-local 1 and virt-local 0 both sitting at global orbital 2 -- merging
+# them or vanishing an antisymmetric pair that is off-diagonal in local axes.
+# So tensor-port identity and display follow the same local axis that
+# ``_tensor_axis_value`` evaluates; ``_mode_key``/``_mode_text`` stay global for
+# operators.  Symbolic ports and explicit user orbitals (``local_value is None``)
+# are unchanged, so this only affects ports produced by typed-domain expansion.
+def _tensor_port_axis(port: Mode) -> int | None:
+    if isinstance(port, Orbital):
+        return port.value if port.local_value is None else port.local_value
+    return None
+
+
+def _tensor_port_key(port: Mode) -> tuple[Any, ...]:
+    axis = _tensor_port_axis(port)
+    return (0, axis) if axis is not None else _mode_key(port)
+
+
+def _tensor_port_text(port: Mode) -> str:
+    axis = _tensor_port_axis(port)
+    return str(axis) if axis is not None else _mode_text(port)
+
+
 def domain(
     name: str,
     size: int | None = None,
@@ -389,7 +415,7 @@ class TensorFactor:
             self.symbol.rank,
             self.symbol.hermitian,
             self.symbol.antisymmetric_pairs,
-            tuple(_mode_key(p) for p in self.ports),
+            tuple(_tensor_port_key(p) for p in self.ports),
         )
 
 
@@ -978,9 +1004,9 @@ def _canonicalize_tensor_factor(factor: TensorFactor) -> tuple[Fraction, TensorF
     coeff = Fraction(1)
     ports = list(factor.ports)
     for a, b in factor.symbol.antisymmetric_pairs:
-        if _mode_key(ports[a]) == _mode_key(ports[b]):
+        if _tensor_port_key(ports[a]) == _tensor_port_key(ports[b]):
             return None
-        if _mode_key(ports[a]) > _mode_key(ports[b]):
+        if _tensor_port_key(ports[a]) > _tensor_port_key(ports[b]):
             ports[a], ports[b] = ports[b], ports[a]
             coeff = -coeff
     return coeff, TensorFactor(factor.symbol, tuple(ports))
@@ -1530,7 +1556,7 @@ def text(expr: Any) -> str:
         for d in term.deltas:
             factors.append(f"δ({_mode_text(d.left)},{_mode_text(d.right)})")
         for t in term.tensors:
-            factors.append(f"{t.symbol.name}[{','.join(_mode_text(p) for p in t.ports)}]")
+            factors.append(f"{t.symbol.name}[{','.join(_tensor_port_text(p) for p in t.ports)}]")
         for o in term.ops:
             factors.append(("a†" if o.kind == "create" else "a") + f"({_mode_text(o.mode)})")
         body = " ".join(factors) if factors else "1"
@@ -1558,7 +1584,9 @@ def latex(expr: Any) -> str:
         for d in term.deltas:
             factors.append(r"\delta_{" + _mode_text(d.left) + "," + _mode_text(d.right) + "}")
         for t in term.tensors:
-            factors.append(t.symbol.name + "_{" + ",".join(_mode_text(p) for p in t.ports) + "}")
+            factors.append(
+                t.symbol.name + "_{" + ",".join(_tensor_port_text(p) for p in t.ports) + "}"
+            )
         for o in term.ops:
             if o.kind == "create":
                 factors.append(r"a^\dagger_{" + _mode_text(o.mode) + "}")

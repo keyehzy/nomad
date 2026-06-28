@@ -15,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a ``Domain``, an ``int`` size, or an iterable of orbital labels) for
   not-yet-finite (e.g. string-only) domains, preserves domain
   metadata under hygienic dummy renaming, and evaluates typed tensor values
-  using domain-local axes while operators use global orbital labels.  Domain
+  using domain-local axes while operators use global orbital labels.  The same
+  domain-local axes drive the identity and ``text``/``latex``/``dumps_json``
+  rendering of symbolic tensor ports, so entries of one symbol over different
+  offset domains that share a global label stay distinct (rather than merging,
+  or vanishing an antisymmetric pair that is off-diagonal in local axes).  Domain
   identity is canonical: domains sharing a name and the same ordered global
   labels compare equal whether written as ``size``/``start`` or as an explicit
   ``values`` list, so equivalent forms merge (and their δ unifies) rather than

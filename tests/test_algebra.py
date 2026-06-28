@@ -284,7 +284,7 @@ def test_retained_cross_domain_delta_reduces_to_a_fixed_point():
     (term,) = stuck.terms
     assert not term.summed
     assert not term.deltas
-    assert [str(p) for p in term.tensors[0].ports] == ["1"]
+    assert [p.value for p in term.tensors[0].ports] == [1]  # pinned to global orbital 1
 
 
 def test_normal_order_keeps_contraction_for_default_domains():

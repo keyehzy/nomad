@@ -5,7 +5,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .core import Domain, Expr, _is_default_spin_orbital_domain, as_expr, latex, openfermion, text
+from .core import (
+    Domain,
+    Expr,
+    _is_default_spin_orbital_domain,
+    _tensor_port_text,
+    as_expr,
+    latex,
+    openfermion,
+    text,
+)
 
 
 def dumps_text(expr: Any) -> str:
@@ -40,7 +49,7 @@ def dumps_json(expr: Any) -> str:
             "summed": [str(i) for i in t.summed],
             "deltas": [[str(d.left), str(d.right)] for d in t.deltas],
             "tensors": [
-                {"symbol": tf.symbol.name, "ports": [str(p) for p in tf.ports]}
+                {"symbol": tf.symbol.name, "ports": [_tensor_port_text(p) for p in tf.ports]}
                 for tf in t.tensors
             ],
             "ops": [{"kind": op.kind, "mode": str(op.mode)} for op in t.ops],
