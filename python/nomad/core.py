@@ -7,6 +7,7 @@ may rewrite one term into many terms.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -17,7 +18,22 @@ Number = int | float | Fraction
 IndexKey = tuple[Any, ...]
 
 
+# Monotonic source of hidden hygienic identities for freshly bound indices.
+#
+# Invariant: two uid spaces coexist -- this global counter (fresh bindings) and
+# the small per-term canonical uids that `_rename_bound_dummies` assigns for
+# display (0, 1, ... = len(mapping)), which do NOT consume this counter.  They
+# never collide because the counter only advances and every bound index consumes
+# at least one tick, so the next fresh uid always exceeds any per-term canonical
+# uid.  The `avoid=` loop in `_fresh_bound_index_like` is therefore a defensive
+# backstop (effectively a single iteration).
 _BOUND_INDEX_UIDS = count()
+
+
+# Display names of the form ``_<digits>`` are reserved for the canonical
+# bound-dummy namespace produced by ``_rename_bound_dummies``; free indices may
+# not use them, so a free index never visually collides with a rendered dummy.
+_RESERVED_INDEX_NAME = re.compile(r"_\d+\Z")
 
 
 @dataclass(frozen=True)
@@ -29,16 +45,24 @@ class Index:
     annotations without committing to the future full charge-vector system.
     When an index is bound by ``sum_``, ``_uid`` carries its hidden hygienic
     identity; ``name`` remains only the human-readable display label.
+
+    Display names of the form ``_<digits>`` are reserved for canonical bound
+    dummies and are rejected for free (user-constructed) indices.
     """
 
     name: str
     spin_z2: int | None = None
     momentum: int | None = None
-    _uid: int | None = field(default=None, repr=False, compare=True)
+    _uid: int | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not self.name or not isinstance(self.name, str):
             raise ValueError("Index name must be a non-empty string")
+        if self._uid is None and _RESERVED_INDEX_NAME.match(self.name):
+            raise ValueError(
+                f"Index name {self.name!r} is reserved for canonical bound dummies; "
+                "free indices may not use the '_<digits>' namespace"
+            )
         if self._uid is not None and (
             isinstance(self._uid, bool) or not isinstance(self._uid, int) or self._uid < 0
         ):
@@ -366,11 +390,6 @@ def _substitute_mode(m: Mode, subst: Mapping[Any, Mode]) -> Mode:
             return subst[ident]
         if m in subst:
             return subst[m]
-        # Compatibility for older internal callers that substituted free
-        # symbolic labels by name.  Bound indices must not be captured by a
-        # display-name substitution.
-        if m._uid is None and m.name in subst:
-            return subst[m.name]
     return m
 
 
@@ -730,6 +749,9 @@ def _rename_bound_dummies(term: Term) -> Term:
             key = _index_identity(m)
             if key in bound and key not in mapping:
                 source = bound[key]
+                # Small per-term canonical uids (0, 1, ...) live in a space
+                # separate from the global `_BOUND_INDEX_UIDS` counter; see the
+                # invariant noted at that counter's definition.
                 mapping[key] = Index(
                     f"_{len(mapping)}", source.spin_z2, source.momentum, _uid=len(mapping)
                 )

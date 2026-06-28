@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-28
+
+### Changed
+- **BREAKING:** Index display names of the form `_<digits>` are now reserved for
+  canonical bound dummies. Constructing a free index with such a name
+  (e.g. `Index("_0")` or `index("_0")`) raises `ValueError`, so a free index can
+  no longer visually collide with a rendered bound dummy.
+
+### Fixed
+- `sum_` bound indices are now hygienic. Each bound summation index carries a
+  hidden, globally-unique identity separate from its human-readable display
+  name, so capture-avoidance and alpha-renaming are structural rather than
+  name-based. Multiplying two independently-bound sums that reuse the same
+  display label (e.g. `sum_(p, adag(p)) * sum_(p, a(p))`) no longer collides
+  them into a single index; they correctly expand as a Cartesian product.
+
 ## [0.2.0] - 2026-06-27
 
 ### Added
@@ -43,5 +59,6 @@ prototype for fermionic second-quantized algebra.
 - Matrix-free determinant-space sparse backend over bitstring Slater determinants.
 - LaTeX and OpenFermion-source exports.
 
+[0.3.0]: https://github.com/keyehzy/nomad/releases/tag/v0.3.0
 [0.2.0]: https://github.com/keyehzy/nomad/releases/tag/v0.2.0
 [0.1.0]: https://github.com/keyehzy/nomad/releases/tag/v0.1.0

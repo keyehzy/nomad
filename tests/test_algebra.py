@@ -52,6 +52,23 @@ def test_independent_bound_indices_expand_as_cartesian_product():
     assert text(out) == "a†(0) a(0) + a†(0) a(1) + a†(1) a(0) + a†(1) a(1)"
 
 
+def test_reserved_dummy_namespace_rejects_free_indices():
+    # `_<digits>` is reserved for canonical bound dummies (see _rename_bound_dummies),
+    # so a free index may not use it and collide with a rendered dummy.
+    for reserved in ("_0", "_1", "_42"):
+        with pytest.raises(ValueError):
+            Index(reserved)
+        with pytest.raises(ValueError):
+            index(reserved)
+    # Names that only resemble the reserved namespace stay valid.
+    assert index("_p").name == "_p"
+    assert index("p0").name == "p0"
+    assert index("_").name == "_"
+    # Canonical dummies still render in the reserved namespace.
+    p = index("p")
+    assert text(sum_(p, adag(p))) == "Σ__0 a†(_0)"
+
+
 def test_tensor_antisymmetric_pair_canonicalization():
     p, q = indices("p q")
     g = tensor("g", [p, q], antisymmetric_pairs=[(p, q)])
