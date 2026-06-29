@@ -199,9 +199,18 @@ def test_prune_by_charge_target_requires_conservation_and_keeps_unknowns():
 def test_prune_by_charge_supports_nonzero_required_delta():
     p, q = indices("p q")
     expr = adag(0) * adag(1) + adag(0) * a(1) + adag(p) * a(q)
-    # delta={"N": 2} keeps only the term that creates two particles; delta_n=None
-    # disables the implicit ΔN = 0 default that would otherwise contradict it.
+    # delta={"N": 2} keeps only the term that creates two particles; passing
+    # delta_n=None alongside it is redundant but still accepted.
     assert text(prune_by_charge(expr, delta={"N": 2}, delta_n=None)) == "a†(0) a†(1)"
+
+
+def test_prune_by_charge_delta_overrides_default_delta_n():
+    # A bare delta={"N": 2} must win over the implicit delta_n=0 default rather
+    # than be silently clobbered back to ΔN = 0; the result matches the explicit
+    # delta_n=None spelling.
+    p, q = indices("p q")
+    expr = adag(0) * adag(1) + adag(0) * a(1) + adag(p) * a(q)
+    assert text(prune_by_charge(expr, delta={"N": 2})) == "a†(0) a†(1)"
 
 
 def test_prune_by_charge_delta_n_none_disables_default_and_keeps_all():

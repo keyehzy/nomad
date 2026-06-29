@@ -1546,10 +1546,13 @@ def _required_charge_deltas(
     if conserve is not None:
         for name in _charge_name_set(conserve, context="conserve"):
             required[name] = 0
-    for name, value in _coerce_charge_target(delta, charges=charges).items():
-        required[name] = value
+    # ``delta_n`` is the convenience shortcut for the ``N`` entry of ``delta``;
+    # apply it first so an explicit ``delta={"N": ...}`` overrides it (including
+    # the implicit ``delta_n=0`` default) rather than being silently clobbered.
     if delta_n is not None:
         required["N"] = _validate_int(delta_n, "delta_n")
+    for name, value in _coerce_charge_target(delta, charges=charges).items():
+        required[name] = value
     return dict(sorted(required.items()))
 
 
@@ -1565,11 +1568,18 @@ def prune_by_charge(
     """Prune terms whose additive charge delta violates conservation laws.
 
     The legacy call ``prune_by_charge(expr)`` keeps only particle-number
-    conserving terms (``ΔN = 0``).  General sectors can be requested with
-    ``target={...}`` or ``conserve=[...]``; those names require zero term delta.
-    Use ``delta={"Q": q}`` for a non-zero required delta.  ``delta_n`` defaults
-    to ``0``, so particle number is conserved alongside any ``target`` /
-    ``conserve`` names unless ``delta_n=None`` is passed to drop that default.
+    conserving terms (``ΔN = 0``).
+
+    Conservation is requested by name with ``target={...}`` or
+    ``conserve=[...]``; each named charge must have zero term delta.  Only the
+    *names* in ``target`` matter here -- its values select a sector elsewhere
+    (see :func:`basis_sector`) and are ignored for pruning.  Use
+    ``delta={"Q": q}`` to require a specific non-zero delta instead; ``delta``
+    entries override the conservation defaults, including ``delta_n``.
+
+    ``delta_n`` defaults to ``0``, so particle number is conserved alongside any
+    ``target`` / ``conserve`` names; pass ``delta_n=None`` to drop that default,
+    or ``delta={"N": k}`` to require a specific ``ΔN``.
 
     A term with an unknown symbolic delta is kept.  It will be pruned later once
     indices are expanded to concrete orbitals, or retained if the violation
