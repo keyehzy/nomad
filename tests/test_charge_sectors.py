@@ -80,6 +80,16 @@ def test_determinant_basis_accepts_explicit_interleaved_spin_labels():
     )
 
 
+def test_determinant_basis_spin_resolved_offset_block_stays_ascending():
+    # Regression: the spin-down block occupies orbitals offset from zero, so its
+    # masks come from combinations(), which is not monotonic in mask value
+    # (e.g. {2,5}=36 precedes {3,4}=24).  The basis must still be emitted in
+    # ascending determinant order, matching the old full-scan order.
+    basis = determinant_basis(spin_up_orbs=2, spin_down_orbs=4, N_up=0, N_down=2)
+    assert basis == (12, 20, 24, 36, 40, 48)
+    assert list(basis) == sorted(basis)
+
+
 # ---------------------------------------------------------------------------
 # basis_sector
 # ---------------------------------------------------------------------------
@@ -100,6 +110,17 @@ def test_basis_sector_honours_explicit_spin_z2_vector():
     # An explicit spin vector overrides the alternating default.
     full = basis_sector(2, target={"Sz2": 2}, spin_z2=[1, 1])
     assert full == (3,)  # both orbitals spin-up: only the doubly occupied det
+
+
+def test_basis_sector_block_structured_sz2_is_ascending():
+    # Regression: a block-structured (non-alternating) Sz2 table routes through
+    # the spin-resolved fast path, whose down block sits on offset orbitals.
+    # The basis must match the old ascending full-scan order rather than the
+    # combination-emission order.
+    charges = {"N": [1, 1, 1, 1, 1, 1], "Sz2": [1, 1, -1, -1, -1, -1]}
+    basis = basis_sector(6, charges=charges, target={"N": 3, "Sz2": -1})
+    assert basis == (13, 14, 21, 22, 25, 26, 37, 38, 41, 42, 49, 50)
+    assert list(basis) == sorted(basis)
 
 
 def test_basis_sector_combines_multiple_charges():

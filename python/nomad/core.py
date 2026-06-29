@@ -1988,19 +1988,31 @@ def _coerce_spin_orbital_blocks(
 
 
 def _iter_orbital_combination_masks(orbitals: Sequence[int], n_particles: int) -> Iterable[int]:
+    """Yield occupation masks for ``n_particles`` chosen from ``orbitals``.
+
+    ``orbitals`` is assumed sorted ascending.  Masks are always emitted in
+    ascending numeric order.  A contiguous run of orbital labels uses the lazy
+    snoob recurrence shifted into place; arbitrary (gapped) labels fall back to
+    ``combinations``, which is not monotonic in mask value and so is sorted.
+    """
+
     if n_particles > len(orbitals):
         return
     if n_particles == 0:
         yield 0
         return
-    if tuple(orbitals) == tuple(range(len(orbitals))):
-        yield from _iter_fixed_weight_determinants(len(orbitals), n_particles)
+    start = orbitals[0]
+    if tuple(orbitals) == tuple(range(start, start + len(orbitals))):
+        for mask in _iter_fixed_weight_determinants(len(orbitals), n_particles):
+            yield mask << start
         return
+    masks = []
     for combo in combinations(orbitals, n_particles):
         det = 0
         for orbital in combo:
             det |= 1 << orbital
-        yield det
+        masks.append(det)
+    yield from sorted(masks)
 
 
 def _sector_size(n_orbitals: int, n_particles: int) -> int:
