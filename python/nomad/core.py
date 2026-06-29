@@ -1502,7 +1502,7 @@ def charge_delta(value: Op | Term | Expr, *, charges: Mapping[str, Any] | None =
         if not deltas:
             return {}
         first = deltas[0]
-        if all(delta == first for delta in deltas):
+        if all(d == first for d in deltas):
             return first
         raise ValueError("Expression contains terms with different charge deltas")
     raise TypeError(f"Cannot compute charge delta for {type(value)!r}")
@@ -1554,7 +1554,12 @@ def _required_charge_deltas(
     for name in _coerce_charge_target(target, charges=charges):
         required[name] = 0
     if conserve is not None:
-        for name in _charge_name_set(conserve, context="conserve"):
+        # Route conserve names through the same coercion as target/delta so the
+        # legacy ``Sz`` -> ``Sz2`` alias is honored consistently across all three.
+        for name in _coerce_charge_target(
+            dict.fromkeys(_charge_name_set(conserve, context="conserve"), 0),
+            charges=charges,
+        ):
             required[name] = 0
     # ``delta_n`` is the convenience shortcut for the ``N`` entry of ``delta``;
     # apply it first so an explicit ``delta={"N": ...}`` overrides it (including
@@ -2060,7 +2065,13 @@ def compile(  # noqa: A001 - public API intentionally named compile
     checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
     sector = _coerce_charge_target(sector, charges=charges)
     effective_charges: Mapping[str, Any] | None = charges
-    if basis is None and sector:
+    if sector:
+        # Complete and validate the per-orbital table for every sector charge so
+        # the projection prune below is well-defined.  This runs even when an
+        # explicit ``basis`` is supplied: the basis only replaces sector-derived
+        # determinant enumeration, but the operator is still projected onto the
+        # sector, so a named charge that lacks a table must raise here rather than
+        # let pruning silently skip it.
         effective_charges = _complete_charge_specs(checked_n, charges, sector, require_target=True)
 
     ordered = prune_by_charge(

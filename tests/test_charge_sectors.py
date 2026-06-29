@@ -241,6 +241,16 @@ def test_prune_by_charge_conserves_modular_charge():
     assert text(kept) == "a†(0) a(0)"
 
 
+def test_prune_by_charge_conserve_honors_legacy_sz_alias():
+    # conserve=["Sz"] must honor the same Sz -> Sz2 alias that target and delta
+    # already use, so it prunes against an "Sz2" table instead of silently doing
+    # nothing for an unknown "Sz" name.
+    sz = {"Sz2": [1, 1, 1, 1]}
+    expr = adag(0) * adag(1) + adag(0) * a(1)
+    kept = prune_by_charge(expr, conserve=["Sz"], charges=sz, delta_n=None)
+    assert text(kept) == "a†(0) a(1)"
+
+
 def test_prune_by_charge_keeps_symbolic_n_term_under_nonuniform_table():
     # A non-uniform N table leaves a symbolic index's ΔN unknown, so a required
     # non-zero ΔN must not prune a†(p) before expansion: orbitals with N == 2
@@ -306,6 +316,15 @@ def test_compile_prunes_charge_violating_terms_from_the_hamiltonian():
 def test_compile_validates_explicit_basis_against_n_orbitals():
     with pytest.raises(ValueError, match="does not fit in n_orbitals=2"):
         compile(adag(0) * a(0), n_orbitals=2, basis=[0, 99])
+
+
+def test_compile_requires_sector_charge_tables_even_with_explicit_basis():
+    # An explicit basis replaces sector-derived enumeration, but the operator is
+    # still projected onto the sector.  A sector charge that lacks a per-orbital
+    # table must raise consistently with the basis-less path rather than silently
+    # skip pruning for that charge.
+    with pytest.raises(ValueError, match="No per-orbital charge values"):
+        compile(adag(0) * a(0), n_orbitals=4, sector={"N": 1, "K": 0}, basis=[1, 2, 4, 8])
 
 
 # ---------------------------------------------------------------------------
