@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Efficient lazy combinatorial determinant generation via ``determinant_basis``
+  for fixed particle-number sectors and spin-resolved ``N_up``/``N_down`` sectors.
+  ``basis_sector`` and ``generate_basis`` now use this path for ordinary
+  particle-number and ``Sz2`` sectors instead of scanning every ``2**n``
+  determinant before filtering.
 - General additive charge sectors.  ``basis_sector`` now filters determinant
   bases by arbitrary per-orbital charge tables, including optional modular
   charges via ``charge(values, modulus=...)`` for momentum/parity-like labels.

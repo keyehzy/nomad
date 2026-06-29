@@ -1,4 +1,5 @@
 import json
+from math import comb
 
 import numpy as np
 import pytest
@@ -38,6 +39,45 @@ def test_charge_values_must_be_an_iterable_of_integers():
     # than silently expanded into character "charges".
     with pytest.raises(TypeError, match="iterable of integer"):
         Charge("abc")
+
+
+# ---------------------------------------------------------------------------
+# determinant_basis
+# ---------------------------------------------------------------------------
+
+
+def test_determinant_basis_generates_fixed_particle_number_in_scan_order():
+    assert determinant_basis(n_orbitals=4, N=2) == (3, 5, 6, 9, 10, 12)
+
+
+def test_determinant_basis_handles_large_sector_sizes_without_materializing():
+    basis = determinant_basis(n_orbitals=40, N=20)
+    assert len(basis) == comb(40, 20)
+    assert basis[:3] == (1048575, 1572863, 1835007)
+
+
+def test_determinant_basis_supports_empty_and_impossible_particle_sectors():
+    assert determinant_basis(n_orbitals=4, N=0) == (0,)
+    assert determinant_basis(n_orbitals=4, N=5) == ()
+
+
+def test_determinant_basis_generates_spin_resolved_block_layout():
+    assert determinant_basis(spin_up_orbs=2, spin_down_orbs=2, N_up=1, N_down=1) == (5, 6, 9, 10)
+
+
+def test_determinant_basis_handles_large_spin_resolved_sector_sizes_lazily():
+    basis = determinant_basis(spin_up_orbs=20, spin_down_orbs=20, N_up=10, N_down=10)
+    assert len(basis) == comb(20, 10) ** 2
+    assert basis[:3] == (1072694271, 1072694783, 1072695039)
+
+
+def test_determinant_basis_accepts_explicit_interleaved_spin_labels():
+    assert determinant_basis(spin_up_orbs=[0, 2], spin_down_orbs=[1, 3], N_up=1, N_down=1) == (
+        3,
+        6,
+        9,
+        12,
+    )
 
 
 # ---------------------------------------------------------------------------

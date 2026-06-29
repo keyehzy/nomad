@@ -45,6 +45,14 @@ print(op.basis)       # (1, 2)
 print(op.to_dense())  # [[2.0, 0.0], [0.0, 3.0]]
 ```
 
+Fixed-particle determinant bases can be generated lazily from combinations,
+without scanning the full ``2**n`` bitstring space:
+
+```python
+basis = determinant_basis(n_orbitals=40, N=20)
+basis = determinant_basis(spin_up_orbs=20, spin_down_orbs=20, N_up=10, N_down=10)
+```
+
 General additive-charge sectors are supported through ``basis_sector`` and the
 same ``charges=...`` table can be passed to ``compile``.  Each charge is a
 per-orbital vector; use ``charge(..., modulus=L)`` for cyclic quantum numbers
