@@ -338,3 +338,100 @@ def test_string_domain_without_finite_data_or_override_is_rejected():
     s = index("s", "band")
     with pytest.raises(ValueError, match="no finite size or values"):
         expand_sums(sum_(s, adag(s)))
+
+
+def test_lazy_linear_operator_one_body_kernel_matches_sparse_without_expansion():
+    p, q = indices("p q")
+    h = tensor("h", [p, q])
+    H = sum_(p, q, h[p, q] * adag(p) * a(q))
+    values = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+    op = compile(
+        H,
+        target="linear_operator",
+        n_orbitals=2,
+        sector={"N": 1},
+        tensor_values={"h": values},
+        strategy="lazy_kbody",
+    )
+
+    assert isinstance(op, LinearOperator)
+    assert op.to_dense() == [[1.0, 2.0], [3.0, 4.0]]
+    assert len(op.kernels) == 1
+    assert op.kernels[0].body_rank == 1
+    assert len(op.expr.terms) == 1  # the symbolic sum is retained, not finite-expanded
+
+
+def test_lazy_linear_operator_two_body_kernel_matches_expanded_sparse_backend():
+    n = 4
+    p, q, r, s = indices("p q r s")
+    g = tensor("g", [p, q, r, s])
+    H = sum_(p, q, r, s, g[p, q, r, s] * adag(p) * adag(q) * a(s) * a(r))
+    values = (np.arange(n**4).reshape(n, n, n, n) % 7) - 3
+
+    sparse = compile(H, n_orbitals=n, sector={"N": 2}, tensor_values={"g": values})
+    lazy = compile(
+        H,
+        target="linear_operator",
+        n_orbitals=n,
+        sector={"N": 2},
+        tensor_values={"g": values},
+        strategy="lazy_kbody",
+    )
+
+    assert np.allclose(lazy.to_dense(), sparse.to_dense())
+    assert len(lazy.kernels) == 1
+    assert lazy.kernels[0].body_rank == 2
+    assert len(lazy.expr.terms) == 1
+    assert len(sparse.expr.terms) > len(lazy.expr.terms)
+
+
+def test_lazy_linear_operator_respects_typed_domain_tensor_local_axes():
+    occ = domain("occ", size=2)
+    virt = domain("virt", size=2, start=2)
+    i = index("i", occ)
+    av = index("a", virt)
+    t = tensor("t", [av, i])
+    H = sum_(av, i, t[av, i] * adag(av) * a(i))
+    values = np.array([[10, 11], [20, 21]])
+
+    sparse = compile(H, n_orbitals=4, sector={"N": 1}, tensor_values={"t": values})
+    lazy = compile(
+        H,
+        target="linear_operator",
+        n_orbitals=4,
+        sector={"N": 1},
+        tensor_values={"t": values},
+    )
+
+    assert np.allclose(lazy.to_dense(), sparse.to_dense())
+    assert lazy.kernels[0].body_rank == 1
+
+
+def test_lazy_linear_operator_three_body_kernel_matches_expanded_sparse_backend():
+    n = 5
+    p, q, r, u, v, w = indices("p q r u v w")
+    t = tensor("t", [p, q, r, u, v, w])
+    H = sum_(
+        p,
+        q,
+        r,
+        u,
+        v,
+        w,
+        t[p, q, r, u, v, w] * adag(p) * adag(q) * adag(r) * a(w) * a(v) * a(u),
+    )
+    values = (np.arange(n**6).reshape((n,) * 6) % 11) - 5
+
+    sparse = compile(H, n_orbitals=n, sector={"N": 3}, tensor_values={"t": values})
+    lazy = compile(
+        H,
+        target="linear_operator",
+        n_orbitals=n,
+        sector={"N": 3},
+        tensor_values={"t": values},
+    )
+
+    assert np.allclose(lazy.to_dense(), sparse.to_dense())
+    assert len(lazy.kernels) == 1
+    assert lazy.kernels[0].body_rank == 3

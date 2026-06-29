@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Lazy k-body determinant kernels for ``compile(..., target="linear_operator",
+  strategy="lazy_kbody")``.  Normal-ordered particle-conserving tensor sums
+  such as ``Σ_pq h[p,q] a†(p) a(q)`` and
+  ``Σ_pqrs g[p,q,r,s] a†(p) a†(q) a(s) a(r)`` are lowered to one- and
+  two-body excitation kernels that bind annihilation indices to occupied
+  orbitals and creation indices to currently available orbitals during
+  ``matvec``, avoiding up-front expansion into all finite operator terms.
 - Efficient lazy combinatorial determinant generation via ``determinant_basis``
   for fixed particle-number sectors and spin-resolved ``N_up``/``N_down`` sectors.
   ``basis_sector`` and ``generate_basis`` now use this path for ordinary

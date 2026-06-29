@@ -2356,6 +2356,20 @@ def _validate_basis(basis: Sequence[int], *, n_orbitals: int) -> tuple[int, ...]
     return out
 
 
+def _basis_and_index(
+    *,
+    n_orbitals: int,
+    sector: Mapping[str, int],
+    charges: Mapping[str, Any] | None,
+    basis: Sequence[int] | None,
+) -> tuple[tuple[int, ...], dict[int, int]]:
+    if basis is None:
+        out = tuple(basis_sector(n_orbitals, charges=charges, target=sector))
+    else:
+        out = _validate_basis(basis, n_orbitals=n_orbitals)
+    return out, {d: i for i, d in enumerate(out)}
+
+
 @dataclass
 class SparseOperator:
     expr: Expr
@@ -2371,12 +2385,14 @@ class SparseOperator:
         _require_finite_numeric(self.expr)
         sector = _coerce_charge_target(self.sector, charges=self.charges)
         self.sector = sector
-        if self.basis is None:
-            basis = basis_sector(self.n_orbitals, charges=self.charges, target=sector)
-        else:
-            basis = _validate_basis(self.basis, n_orbitals=self.n_orbitals)
+        basis, index_of = _basis_and_index(
+            n_orbitals=self.n_orbitals,
+            sector=sector,
+            charges=self.charges,
+            basis=self.basis,
+        )
         self.basis = basis
-        self.index_of = {d: i for i, d in enumerate(basis)}
+        self.index_of = index_of
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -2416,6 +2432,390 @@ class SparseOperator:
         return mat
 
 
+def _determinant_step(det: int, kind: str, orbital: int) -> tuple[int, int] | None:
+    mask = 1 << orbital
+    phase = -1 if ((det & (mask - 1)).bit_count() % 2) else 1
+    if kind == "destroy":
+        if not (det & mask):
+            return None
+        return det & ~mask, phase
+    if det & mask:
+        return None
+    return det | mask, phase
+
+
+@dataclass(frozen=True)
+class LazyKBodyKernel:
+    """A lazy determinant-space kernel for one normal-ordered k-body term.
+
+    The kernel keeps the symbolic operator pattern intact.  During ``matvec`` it
+    binds annihilation indices only to currently occupied orbitals and creation
+    indices only to orbitals that are empty after the required annihilations, so
+    one- and two-body tensor Hamiltonians do not have to be materialized as all
+    finite operator terms before application.
+    """
+
+    body_rank: int
+    coeff: Fraction
+    tensors: tuple[TensorFactor, ...]
+    ops: tuple[Op, ...]
+    summed: tuple[Index, ...]
+    index_points: tuple[tuple[IndexKey, tuple[Orbital, ...]], ...]
+    tensor_values: Mapping[str, Any] = field(repr=False, compare=False)
+
+    @property
+    def term(self) -> Term:
+        return Term(self.coeff, self.tensors, self.ops, (), self.summed)
+
+    def _points_for_key(self, key: IndexKey) -> tuple[Orbital, ...]:
+        for candidate_key, points in self.index_points:
+            if candidate_key == key:
+                return points
+        raise KeyError(key)
+
+    def _concrete_mode(
+        self,
+        mode: Mode,
+        assignment: Mapping[IndexKey, Orbital],
+    ) -> Orbital:
+        if isinstance(mode, Orbital):
+            return mode
+        return assignment[_index_identity(mode)]
+
+    def _coefficient(self, assignment: Mapping[IndexKey, Orbital]) -> Fraction:
+        coeff = self.coeff
+        for tf in self.tensors:
+            values = self.tensor_values[tf.symbol.name]
+            ports = tuple(self._concrete_mode(port, assignment) for port in tf.ports)
+            coeff *= _eval_tensor_value(values, ports)
+        return coeff
+
+    def transitions(self, det: int) -> Iterator[tuple[int, Fraction]]:
+        """Yield ``(output_determinant, signed_coefficient)`` transitions."""
+
+        assignment: dict[IndexKey, Orbital] = {}
+        yield from self._apply_reversed(len(self.ops) - 1, det, 1, assignment)
+
+    def _apply_reversed(
+        self,
+        pos: int,
+        det: int,
+        sign: int,
+        assignment: dict[IndexKey, Orbital],
+    ) -> Iterator[tuple[int, Fraction]]:
+        if pos < 0:
+            coeff = self._coefficient(assignment)
+            if coeff:
+                yield det, coeff * sign
+            return
+
+        op = self.ops[pos]
+        if isinstance(op.mode, Orbital):
+            applied = _determinant_step(det, op.kind, op.mode.value)
+            if applied is None:
+                return
+            out_det, phase = applied
+            yield from self._apply_reversed(pos - 1, out_det, sign * phase, assignment)
+            return
+
+        key = _index_identity(op.mode)
+        assigned = assignment.get(key)
+        candidates = (assigned,) if assigned is not None else self._points_for_key(key)
+        for orbital in candidates:
+            applied = _determinant_step(det, op.kind, orbital.value)
+            if applied is None:
+                continue
+            out_det, phase = applied
+            if assigned is None:
+                assignment[key] = orbital
+            yield from self._apply_reversed(pos - 1, out_det, sign * phase, assignment)
+            if assigned is None:
+                del assignment[key]
+
+
+@dataclass(frozen=True)
+class ExpandedTermKernel:
+    """Fallback kernel for finite terms that are not recognized as k-body sums."""
+
+    terms: tuple[Term, ...]
+    body_rank: int | None = None
+
+    def transitions(self, det: int) -> Iterator[tuple[int, Fraction]]:
+        for term in self.terms:
+            applied = apply_ops_to_det(det, term.ops)
+            if applied is None:
+                continue
+            out_det, sign = applied
+            yield out_det, term.coeff * sign
+
+
+def _op_body_rank(ops: Sequence[Op]) -> int | None:
+    n_ops = len(ops)
+    if n_ops == 0 or n_ops % 2:
+        return None
+    rank = n_ops // 2
+    if all(op.kind == "create" for op in ops[:rank]) and all(
+        op.kind == "destroy" for op in ops[rank:]
+    ):
+        return rank
+    return None
+
+
+def _contains_only_bound_orbital_modes(mode: Mode, bound_keys: set[IndexKey]) -> bool:
+    return isinstance(mode, Orbital) or _index_identity(mode) in bound_keys
+
+
+def _lazy_index_points(
+    index: Index,
+    *,
+    n_orbitals: int,
+    domains: Mapping[str, Any] | None,
+) -> tuple[Orbital, ...]:
+    index_domain = _index_domain(index)
+    points = _domain_expansion_points(index_domain, n_orbitals=n_orbitals, domains=domains)
+    return tuple(
+        Orbital(global_value, index_domain, local_value=local_value)
+        for local_value, global_value in points
+    )
+
+
+def _try_lazy_kbody_kernel(
+    term: Term,
+    *,
+    n_orbitals: int,
+    tensor_values: Mapping[str, Any],
+    domains: Mapping[str, Any] | None,
+) -> LazyKBodyKernel | None:
+    if term.deltas:
+        return None
+    body_rank = _op_body_rank(term.ops)
+    if body_rank is None:
+        return None
+
+    bound = {_index_identity(index): index for index in term.summed}
+    bound_keys = set(bound)
+    op_index_keys: set[IndexKey] = set()
+    for op in term.ops:
+        if not _contains_only_bound_orbital_modes(op.mode, bound_keys):
+            return None
+        if isinstance(op.mode, Index):
+            op_index_keys.add(_index_identity(op.mode))
+
+    for tf in term.tensors:
+        if tf.symbol.name not in tensor_values:
+            return None
+        for port in tf.ports:
+            if not _contains_only_bound_orbital_modes(port, bound_keys):
+                return None
+            if isinstance(port, Index) and _index_identity(port) not in op_index_keys:
+                # This dummy contributes only to the coefficient and would still
+                # require an independent tensor contraction.  Leave it to the
+                # finite fallback rather than hiding a determinant-independent
+                # Cartesian product in every matvec.
+                return None
+
+    if any(_index_identity(index) not in op_index_keys for index in term.summed):
+        return None
+
+    index_points = tuple(
+        (_index_identity(index), _lazy_index_points(index, n_orbitals=n_orbitals, domains=domains))
+        for index in term.summed
+    )
+    return LazyKBodyKernel(
+        body_rank,
+        term.coeff,
+        term.tensors,
+        term.ops,
+        term.summed,
+        index_points,
+        tensor_values,
+    )
+
+
+def _expanded_kernel(
+    expr: Expr,
+    *,
+    n_orbitals: int,
+    tensor_values: Mapping[str, Any],
+    domains: Mapping[str, Any] | None,
+    charges: Mapping[str, Any] | None,
+    sector: Mapping[str, int],
+) -> ExpandedTermKernel | None:
+    lowered = expand_sums(
+        expr,
+        n_orbitals=n_orbitals,
+        tensor_values=tensor_values,
+        domains=domains,
+    )
+    lowered = prune_by_charge(
+        lowered,
+        delta_n=None,
+        charges=charges,
+        target=sector,
+    )
+    _require_finite_numeric(lowered)
+    if not lowered.terms:
+        return None
+    ranks = {_op_body_rank(term.ops) for term in lowered.terms}
+    ranks.discard(None)
+    body_rank = ranks.pop() if len(ranks) == 1 else None
+    return ExpandedTermKernel(lowered.terms, body_rank=body_rank)
+
+
+def _lazy_kbody_kernels(
+    expr: Expr,
+    *,
+    n_orbitals: int,
+    tensor_values: Mapping[str, Any] | None,
+    domains: Mapping[str, Any] | None,
+    charges: Mapping[str, Any] | None,
+    sector: Mapping[str, int],
+) -> tuple[Any, ...]:
+    values = tensor_values or {}
+    kernels: list[Any] = []
+    fallback: list[Term] = []
+    for term in expr.terms:
+        kernel = _try_lazy_kbody_kernel(
+            term,
+            n_orbitals=n_orbitals,
+            tensor_values=values,
+            domains=domains,
+        )
+        if kernel is None:
+            fallback.append(term)
+        else:
+            kernels.append(kernel)
+
+    if fallback:
+        expanded = _expanded_kernel(
+            Expr(tuple(fallback)),
+            n_orbitals=n_orbitals,
+            tensor_values=values,
+            domains=domains,
+            charges=charges,
+            sector=sector,
+        )
+        if expanded is not None:
+            kernels.append(expanded)
+    return tuple(kernels)
+
+
+@dataclass
+class LinearOperator:
+    """Matrix-free determinant-space operator backed by lazy kernels."""
+
+    expr: Expr
+    n_orbitals: int
+    kernels: Sequence[Any] = field(default_factory=tuple)
+    sector: Mapping[str, int] = field(default_factory=dict)
+    basis: Sequence[int] | None = None
+    charges: Mapping[str, Any] | None = None
+    index_of: dict[int, int] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.n_orbitals = _validate_nonnegative_int(self.n_orbitals, "n_orbitals")
+        self.expr = self.expr.simplify()
+        self.kernels = tuple(self.kernels)
+        sector = _coerce_charge_target(self.sector, charges=self.charges)
+        self.sector = sector
+        basis, index_of = _basis_and_index(
+            n_orbitals=self.n_orbitals,
+            sector=sector,
+            charges=self.charges,
+            basis=self.basis,
+        )
+        self.basis = basis
+        self.index_of = index_of
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        basis = cast(tuple[int, ...], self.basis)
+        n = len(basis)
+        return (n, n)
+
+    @property
+    def dtype(self) -> type[float]:
+        return float
+
+    def matvec(self, x: Sequence[Number]) -> list[float]:
+        basis = cast(tuple[int, ...], self.basis)
+        if len(x) != len(basis):
+            raise ValueError(f"Input vector length {len(x)} does not match basis size {len(basis)}")
+        y = [0.0 for _ in basis]
+        for col, det in enumerate(basis):
+            amp = float(x[col])
+            if amp == 0.0:
+                continue
+            for kernel in self.kernels:
+                for out_det, coeff in kernel.transitions(det):
+                    row = self.index_of.get(out_det)
+                    if row is not None:
+                        y[row] += float(coeff) * amp
+        return y
+
+    def _matvec(self, x: Sequence[Number]) -> list[float]:
+        return self.matvec(x)
+
+    def dot(self, x: Sequence[Number]) -> list[float]:
+        return self.matvec(x)
+
+    def __matmul__(self, x: Sequence[Number]) -> list[float]:
+        return self.matvec(x)
+
+    def to_dense(self) -> list[list[float]]:
+        basis = cast(tuple[int, ...], self.basis)
+        n = len(basis)
+        mat = [[0.0 for _ in range(n)] for _ in range(n)]
+        for col in range(n):
+            e = [0.0 for _ in range(n)]
+            e[col] = 1.0
+            y = self.matvec(e)
+            for row, val in enumerate(y):
+                mat[row][col] = val
+        return mat
+
+
+def _compiled_charge_context(
+    *,
+    n_orbitals: int | None,
+    sector: Mapping[str, int] | None,
+    charges: Mapping[str, Any] | None,
+) -> tuple[int, dict[str, int], Mapping[str, Any] | None]:
+    if n_orbitals is None:
+        raise ValueError("n_orbitals is required for sparse/linear_operator compilation")
+    checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+    sector_map = _coerce_charge_target(sector, charges=charges)
+    effective_charges: Mapping[str, Any] | None = charges
+    if sector_map:
+        # Complete and validate the per-orbital table for every sector charge so
+        # projection pruning is well-defined.  This runs even when an explicit
+        # ``basis`` is supplied: the basis only replaces sector-derived
+        # determinant enumeration, but the operator is still projected onto the
+        # sector, so a named charge that lacks a table must raise here rather
+        # than let pruning silently skip it.
+        effective_charges = _complete_charge_specs(
+            checked_n,
+            charges,
+            sector_map,
+            require_target=True,
+        )
+    return checked_n, sector_map, effective_charges
+
+
+def _normal_order_for_compile(
+    expr: Any,
+    *,
+    charges: Mapping[str, Any] | None,
+    sector: Mapping[str, int],
+) -> Expr:
+    return prune_by_charge(
+        normal_order(expr),
+        delta_n=None,
+        charges=charges,
+        target=sector,
+    )
+
+
 def compile(  # noqa: A001 - public API intentionally named compile
     expr: Any,
     *,
@@ -2426,8 +2826,19 @@ def compile(  # noqa: A001 - public API intentionally named compile
     basis: Sequence[int] | None = None,
     tensor_values: Mapping[str, Any] | None = None,
     domains: Mapping[str, Any] | None = None,
+    strategy: str | None = None,
 ) -> Any:
-    """Compile an expression into an executable sparse operator.
+    """Compile an expression into an executable determinant-space operator.
+
+    ``target="sparse"`` preserves the historical finite backend: symbolic sums
+    are expanded into concrete operator terms before application.
+
+    ``target="linear_operator"`` returns a matrix-free :class:`LinearOperator`.
+    With ``strategy="lazy_kbody"`` (the default for this target), normal-ordered
+    particle-conserving k-body patterns such as ``Σ_pq h[p,q] a†(p) a(q)`` and
+    ``Σ_pqrs g[p,q,r,s] a†(p) a†(q) a(s) a(r)`` are kept as lazy excitation
+    kernels instead of being pre-expanded.  Unrecognized finite terms fall back
+    to the existing expansion path.
 
     ``sector`` / ``charges`` restrict the operator to an additive-charge sector
     (see :func:`basis_sector`).  Compiling into a sector *projects* onto it:
@@ -2438,47 +2849,87 @@ def compile(  # noqa: A001 - public API intentionally named compile
     it from the sector.
     """
 
-    if target != "sparse":
-        raise NotImplementedError("NOMAD executable backend is target='sparse'")
-    if n_orbitals is None:
-        raise ValueError("n_orbitals is required for sparse compilation")
-    checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
-    sector = _coerce_charge_target(sector, charges=charges)
-    effective_charges: Mapping[str, Any] | None = charges
-    if sector:
-        # Complete and validate the per-orbital table for every sector charge so
-        # the projection prune below is well-defined.  This runs even when an
-        # explicit ``basis`` is supplied: the basis only replaces sector-derived
-        # determinant enumeration, but the operator is still projected onto the
-        # sector, so a named charge that lacks a table must raise here rather than
-        # let pruning silently skip it.
-        effective_charges = _complete_charge_specs(checked_n, charges, sector, require_target=True)
+    if target not in {"sparse", "linear_operator"}:
+        raise NotImplementedError(
+            "NOMAD executable backends are target='sparse' and target='linear_operator'"
+        )
 
-    ordered = prune_by_charge(
-        normal_order(expr),
-        delta_n=None,
-        charges=effective_charges,
-        target=sector,
-    )
-    lowered = expand_sums(
-        ordered,
+    checked_n, sector_map, effective_charges = _compiled_charge_context(
         n_orbitals=n_orbitals,
-        tensor_values=tensor_values,
-        domains=domains,
-    )
-    lowered = prune_by_charge(
-        lowered,
-        delta_n=None,
-        charges=effective_charges,
-        target=sector,
-    )
-    return SparseOperator(
-        lowered,
-        n_orbitals=checked_n,
         sector=sector,
-        charges=effective_charges,
-        basis=basis,
+        charges=charges,
     )
+    ordered = _normal_order_for_compile(
+        expr,
+        charges=effective_charges,
+        sector=sector_map,
+    )
+
+    if target == "sparse":
+        if strategy not in (None, "expand"):
+            raise NotImplementedError(
+                "target='sparse' supports only strategy=None or strategy='expand'"
+            )
+        lowered = expand_sums(
+            ordered,
+            n_orbitals=checked_n,
+            tensor_values=tensor_values,
+            domains=domains,
+        )
+        lowered = prune_by_charge(
+            lowered,
+            delta_n=None,
+            charges=effective_charges,
+            target=sector_map,
+        )
+        return SparseOperator(
+            lowered,
+            n_orbitals=checked_n,
+            sector=sector_map,
+            charges=effective_charges,
+            basis=basis,
+        )
+
+    if target == "linear_operator":
+        actual_strategy = "lazy_kbody" if strategy is None else strategy
+        if actual_strategy == "expand":
+            lowered = expand_sums(
+                ordered,
+                n_orbitals=checked_n,
+                tensor_values=tensor_values,
+                domains=domains,
+            )
+            lowered = prune_by_charge(
+                lowered,
+                delta_n=None,
+                charges=effective_charges,
+                target=sector_map,
+            )
+            _require_finite_numeric(lowered)
+            kernels: tuple[Any, ...] = (ExpandedTermKernel(lowered.terms),) if lowered.terms else ()
+        elif actual_strategy == "lazy_kbody":
+            kernels = _lazy_kbody_kernels(
+                ordered,
+                n_orbitals=checked_n,
+                tensor_values=tensor_values,
+                domains=domains,
+                charges=effective_charges,
+                sector=sector_map,
+            )
+        else:
+            raise NotImplementedError(
+                "target='linear_operator' supports strategy='lazy_kbody' or strategy='expand'"
+            )
+        return LinearOperator(
+            ordered,
+            n_orbitals=checked_n,
+            kernels=kernels,
+            sector=sector_map,
+            charges=effective_charges,
+            basis=basis,
+        )
+
+    raise AssertionError("unreachable compile target branch")
 
 
 def openfermion(expr: Any) -> str:

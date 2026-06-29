@@ -45,6 +45,28 @@ print(op.basis)       # (1, 2)
 print(op.to_dense())  # [[2.0, 0.0], [0.0, 3.0]]
 ```
 
+For tensor Hamiltonians, the ``linear_operator`` target can keep recognized
+normal-ordered k-body sums as lazy determinant kernels instead of expanding
+``n**2`` or ``n**4`` concrete terms up front:
+
+```python
+from nomad import *
+
+p, q = indices("p q")
+h = tensor("h", [p, q])
+H1 = sum_(p, q, h[p, q] * adag(p) * a(q))
+
+op = compile(
+    H1,
+    target="linear_operator",
+    n_orbitals=n,
+    sector={"N": nelec, "Sz2": 0},
+    tensor_values={"h": h_values},
+    strategy="lazy_kbody",
+)
+y = op.matvec(x)
+```
+
 Fixed-particle determinant bases can be generated lazily from combinations,
 without scanning the full ``2**n`` bitstring space:
 
@@ -134,7 +156,7 @@ NCIR/Wick term sum: coeff × tensors × op-word × deltas × constraints
   ↓
 normal ordering → delta elimination → dummy-index canonicalization
   ↓
-LaTeX / OpenFermion-source / matrix-free determinant backend
+LaTeX / OpenFermion-source / sparse or lazy-kbody determinant backends
 ```
 
 The reference runtime in `python/nomad/` is a small, deterministic,
