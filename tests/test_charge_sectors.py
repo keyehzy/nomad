@@ -1,4 +1,5 @@
 import json
+from math import comb
 
 import numpy as np
 import pytest
@@ -41,6 +42,64 @@ def test_charge_values_must_be_an_iterable_of_integers():
 
 
 # ---------------------------------------------------------------------------
+# determinant_basis
+# ---------------------------------------------------------------------------
+
+
+def test_determinant_basis_generates_fixed_particle_number_in_scan_order():
+    assert determinant_basis(n_orbitals=4, N=2) == (3, 5, 6, 9, 10, 12)
+
+
+def test_determinant_basis_handles_large_sector_sizes_without_materializing():
+    basis = determinant_basis(n_orbitals=40, N=20)
+    assert len(basis) == comb(40, 20)
+    assert basis[:3] == (1048575, 1572863, 1835007)
+
+
+def test_determinant_basis_supports_empty_and_impossible_particle_sectors():
+    assert determinant_basis(n_orbitals=4, N=0) == (0,)
+    assert determinant_basis(n_orbitals=4, N=5) == ()
+
+
+def test_determinant_basis_generates_spin_resolved_block_layout():
+    assert determinant_basis(spin_up_orbs=2, spin_down_orbs=2, N_up=1, N_down=1) == (5, 6, 9, 10)
+
+
+def test_determinant_basis_handles_large_spin_resolved_sector_sizes_lazily():
+    basis = determinant_basis(spin_up_orbs=20, spin_down_orbs=20, N_up=10, N_down=10)
+    assert len(basis) == comb(20, 10) ** 2
+    assert basis[:3] == (1072694271, 1072694783, 1072695039)
+
+
+def test_determinant_basis_accepts_explicit_interleaved_spin_labels():
+    assert determinant_basis(spin_up_orbs=[0, 2], spin_down_orbs=[1, 3], N_up=1, N_down=1) == (
+        3,
+        6,
+        9,
+        12,
+    )
+
+
+def test_determinant_basis_spin_resolved_offset_block_stays_ascending():
+    # Regression: the spin-down block occupies orbitals offset from zero, so its
+    # masks come from combinations(), which is not monotonic in mask value
+    # (e.g. {2,5}=36 precedes {3,4}=24).  The basis must still be emitted in
+    # ascending determinant order, matching the old full-scan order.
+    basis = determinant_basis(spin_up_orbs=2, spin_down_orbs=4, N_up=0, N_down=2)
+    assert basis == (12, 20, 24, 36, 40, 48)
+    assert list(basis) == sorted(basis)
+
+
+def test_determinant_basis_is_unhashable_like_a_list():
+    # Content-based equality has no cheap consistent hash, so the lazy basis is
+    # unhashable like list; to_tuple() provides a hashable snapshot.
+    basis = determinant_basis(n_orbitals=4, N=2)
+    with pytest.raises(TypeError):
+        hash(basis)
+    assert hash(basis.to_tuple()) == hash((3, 5, 6, 9, 10, 12))
+
+
+# ---------------------------------------------------------------------------
 # basis_sector
 # ---------------------------------------------------------------------------
 
@@ -60,6 +119,17 @@ def test_basis_sector_honours_explicit_spin_z2_vector():
     # An explicit spin vector overrides the alternating default.
     full = basis_sector(2, target={"Sz2": 2}, spin_z2=[1, 1])
     assert full == (3,)  # both orbitals spin-up: only the doubly occupied det
+
+
+def test_basis_sector_block_structured_sz2_is_ascending():
+    # Regression: a block-structured (non-alternating) Sz2 table routes through
+    # the spin-resolved fast path, whose down block sits on offset orbitals.
+    # The basis must match the old ascending full-scan order rather than the
+    # combination-emission order.
+    charges = {"N": [1, 1, 1, 1, 1, 1], "Sz2": [1, 1, -1, -1, -1, -1]}
+    basis = basis_sector(6, charges=charges, target={"N": 3, "Sz2": -1})
+    assert basis == (13, 14, 21, 22, 25, 26, 37, 38, 41, 42, 49, 50)
+    assert list(basis) == sorted(basis)
 
 
 def test_basis_sector_combines_multiple_charges():

@@ -8,12 +8,13 @@ may rewrite one term into many terms.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
-from itertools import count, product
+from itertools import combinations, count, islice, product
+from math import comb
 from numbers import Integral
-from typing import Any, cast
+from typing import Any, cast, overload
 
 Number = int | float | Fraction
 IndexKey = tuple[Any, ...]
@@ -1913,6 +1914,384 @@ def _det_matches_charge_target(
     return True
 
 
+def _iter_fixed_weight_determinants(n_orbitals: int, n_particles: int) -> Iterable[int]:
+    """Yield determinants with exactly ``n_particles`` occupied orbitals.
+
+    The sequence is emitted in the same numeric order as scanning all bitstrings
+    with ``range(1 << n_orbitals)`` and keeping a fixed popcount, but it visits
+    only the requested fixed-weight determinants.  The implementation is the
+    standard "next higher integer with the same number of set bits" (snoob)
+    recurrence.
+    """
+
+    if n_particles > n_orbitals:
+        return
+    if n_particles == 0:
+        yield 0
+        return
+
+    det = (1 << n_particles) - 1
+    limit = 1 << n_orbitals
+    while det < limit:
+        yield det
+        smallest = det & -det
+        ripple = det + smallest
+        det = (((ripple ^ det) >> 2) // smallest) | ripple
+
+
+def _coerce_orbital_labels(values: Iterable[int], *, context: str) -> tuple[int, ...]:
+    return tuple(sorted(_coerce_domain_values(values, context=context)))
+
+
+def _coerce_spin_orbital_blocks(
+    spin_up_orbs: int | Sequence[int],
+    spin_down_orbs: int | Sequence[int],
+    *,
+    n_orbitals: int | None = None,
+) -> tuple[tuple[int, ...], tuple[int, ...], int]:
+    if isinstance(spin_up_orbs, Integral) and isinstance(spin_down_orbs, Integral):
+        n_up = _validate_nonnegative_int(cast(Any, spin_up_orbs), "spin_up_orbs")
+        n_down = _validate_nonnegative_int(cast(Any, spin_down_orbs), "spin_down_orbs")
+        total = n_up + n_down
+        if n_orbitals is not None:
+            checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+            if checked_n != total:
+                raise ValueError(
+                    "n_orbitals must equal spin_up_orbs + spin_down_orbs "
+                    "when spin orbital counts are supplied"
+                )
+        up_orbitals = tuple(range(n_up))
+        down_orbitals = tuple(range(n_up, total))
+        return up_orbitals, down_orbitals, total
+
+    if isinstance(spin_up_orbs, Integral) or isinstance(spin_down_orbs, Integral):
+        raise TypeError("spin_up_orbs and spin_down_orbs must both be counts or both be sequences")
+
+    up_values = cast(Sequence[int], spin_up_orbs)
+    down_values = cast(Sequence[int], spin_down_orbs)
+    up_orbitals = _coerce_orbital_labels(up_values, context="spin_up_orbs")
+    down_orbitals = _coerce_orbital_labels(down_values, context="spin_down_orbs")
+    overlap = set(up_orbitals) & set(down_orbitals)
+    if overlap:
+        first = min(overlap)
+        raise ValueError(f"spin-up and spin-down orbital sets overlap at orbital {first}")
+
+    inferred_n = max(up_orbitals + down_orbitals, default=-1) + 1
+    if n_orbitals is None:
+        checked_n = inferred_n
+    else:
+        checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+        for orbital in up_orbitals + down_orbitals:
+            if orbital >= checked_n:
+                raise ValueError(f"spin orbital {orbital} does not fit in n_orbitals={checked_n}")
+    return up_orbitals, down_orbitals, checked_n
+
+
+def _iter_orbital_combination_masks(orbitals: Sequence[int], n_particles: int) -> Iterable[int]:
+    """Yield occupation masks for ``n_particles`` chosen from ``orbitals``.
+
+    ``orbitals`` is assumed sorted ascending.  Masks are always emitted in
+    ascending numeric order.  A contiguous run of orbital labels uses the lazy
+    snoob recurrence shifted into place; arbitrary (gapped) labels fall back to
+    ``combinations``, which is not monotonic in mask value and so is sorted.
+    """
+
+    if n_particles > len(orbitals):
+        return
+    if n_particles == 0:
+        yield 0
+        return
+    start = orbitals[0]
+    if tuple(orbitals) == tuple(range(start, start + len(orbitals))):
+        for mask in _iter_fixed_weight_determinants(len(orbitals), n_particles):
+            yield mask << start
+        return
+    masks = []
+    for combo in combinations(orbitals, n_particles):
+        det = 0
+        for orbital in combo:
+            det |= 1 << orbital
+        masks.append(det)
+    yield from sorted(masks)
+
+
+def _sector_size(n_orbitals: int, n_particles: int) -> int:
+    if n_particles < 0 or n_particles > n_orbitals:
+        return 0
+    return comb(n_orbitals, n_particles)
+
+
+@dataclass(frozen=True, eq=False)
+class DeterminantBasis(Sequence[int]):
+    """Lazy determinant sequence produced by :func:`determinant_basis`.
+
+    Like :class:`list`, this is an unhashable sequence.  ``__eq__`` compares
+    element-by-element against any sequence, so a consistent hash would have to
+    materialize the (potentially enormous) determinant list.  Call
+    :meth:`to_tuple` when a hashable snapshot is needed.
+    """
+
+    _size: int
+    _iter_factory: Callable[[], Iterable[int]] = field(repr=False)
+    _description: str = "determinants"
+
+    def __len__(self) -> int:
+        return self._size
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self._iter_factory())
+
+    @overload
+    def __getitem__(self, index: int) -> int: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[int, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> int | tuple[int, ...]:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self._size)
+            if step == 1:
+                return tuple(islice(self, start, stop))
+            return tuple(self[i] for i in range(start, stop, step))
+
+        offset = index + self._size if index < 0 else index
+        if offset < 0 or offset >= self._size:
+            raise IndexError("determinant basis index out of range")
+        return next(islice(self, offset, None))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Sequence):
+            return False
+        if len(self) != len(other):
+            return False
+        return all(left == right for left, right in zip(self, other, strict=True))
+
+    # A content-based __eq__ has no cheap, consistent hash, so stay unhashable
+    # like list.  Defining __eq__ already sets this to None; make it explicit so
+    # the frozen dataclass does not read as an accidentally-hashable value type.
+    __hash__ = None  # type: ignore[assignment]
+
+    def __repr__(self) -> str:  # pragma: no cover - convenience for REPLs
+        return f"DeterminantBasis(size={self._size}, {self._description})"
+
+    def to_tuple(self) -> tuple[int, ...]:
+        """Materialize the basis as a tuple."""
+
+        return tuple(self)
+
+
+def _spin_blocks_are_ordered(
+    low_orbitals: Sequence[int],
+    high_orbitals: Sequence[int],
+) -> bool:
+    return not low_orbitals or not high_orbitals or max(low_orbitals) < min(high_orbitals)
+
+
+def _iter_spin_resolved_determinants(
+    up_orbitals: Sequence[int],
+    down_orbitals: Sequence[int],
+    n_up: int,
+    n_down: int,
+) -> Iterable[int]:
+    if n_up > len(up_orbitals) or n_down > len(down_orbitals):
+        return
+
+    if _spin_blocks_are_ordered(up_orbitals, down_orbitals):
+        lower_orbitals, lower_count = up_orbitals, n_up
+        higher_orbitals, higher_count = down_orbitals, n_down
+    elif _spin_blocks_are_ordered(down_orbitals, up_orbitals):
+        lower_orbitals, lower_count = down_orbitals, n_down
+        higher_orbitals, higher_count = up_orbitals, n_up
+    else:
+        combined = (
+            up_mask | down_mask
+            for down_mask in _iter_orbital_combination_masks(down_orbitals, n_down)
+            for up_mask in _iter_orbital_combination_masks(up_orbitals, n_up)
+        )
+        yield from sorted(combined)
+        return
+
+    lower_masks = tuple(_iter_orbital_combination_masks(lower_orbitals, lower_count))
+    for higher_mask in _iter_orbital_combination_masks(higher_orbitals, higher_count):
+        for lower_mask in lower_masks:
+            yield higher_mask | lower_mask
+
+
+def determinant_basis(
+    n_orbitals: int | None = None,
+    *,
+    N: int | None = None,
+    spin_up_orbs: int | Sequence[int] | None = None,
+    spin_down_orbs: int | Sequence[int] | None = None,
+    N_up: int | None = None,
+    N_down: int | None = None,
+) -> DeterminantBasis:
+    """Generate a lazy determinant basis directly in a particle-number sector.
+
+    The spin-orbital form ``determinant_basis(n_orbitals=n, N=k)`` returns all
+    determinants with exactly ``k`` occupied orbitals, in ascending determinant
+    order.  Omitting ``N`` returns the full determinant basis.
+
+    The spin-resolved form
+    ``determinant_basis(spin_up_orbs=nup, spin_down_orbs=ndown, N_up=ku, N_down=kd)``
+    treats the first ``nup`` orbital labels as spin-up and the next ``ndown`` as
+    spin-down.  ``spin_up_orbs`` and ``spin_down_orbs`` may also be explicit,
+    disjoint sequences of orbital labels, which is useful for interleaved spin
+    layouts such as ``[0, 2, ...]`` / ``[1, 3, ...]``.
+
+    Only combinations inside the requested sector are generated; the full
+    ``2**n`` bitstring space is not scanned.
+    """
+
+    spin_args = (spin_up_orbs, spin_down_orbs, N_up, N_down)
+    if any(arg is not None for arg in spin_args):
+        if spin_up_orbs is None or spin_down_orbs is None or N_up is None or N_down is None:
+            raise ValueError(
+                "spin-resolved determinant_basis requires spin_up_orbs, "
+                "spin_down_orbs, N_up, and N_down"
+            )
+        checked_n_up = _validate_nonnegative_int(N_up, "N_up")
+        checked_n_down = _validate_nonnegative_int(N_down, "N_down")
+        if N is not None:
+            checked_N = _validate_nonnegative_int(N, "N")
+            if checked_N != checked_n_up + checked_n_down:
+                raise ValueError("N must equal N_up + N_down when both are supplied")
+        up_orbitals, down_orbitals, _checked_n = _coerce_spin_orbital_blocks(
+            spin_up_orbs,
+            spin_down_orbs,
+            n_orbitals=n_orbitals,
+        )
+        size = _sector_size(len(up_orbitals), checked_n_up) * _sector_size(
+            len(down_orbitals), checked_n_down
+        )
+        description = (
+            f"spin_up_orbs={len(up_orbitals)}, spin_down_orbs={len(down_orbitals)}, "
+            f"N_up={checked_n_up}, N_down={checked_n_down}"
+        )
+        return DeterminantBasis(
+            size,
+            lambda: _iter_spin_resolved_determinants(
+                up_orbitals, down_orbitals, checked_n_up, checked_n_down
+            ),
+            description,
+        )
+
+    if n_orbitals is None:
+        raise ValueError("n_orbitals is required unless spin-resolved orbital blocks are supplied")
+    checked_n = _validate_nonnegative_int(n_orbitals, "n_orbitals")
+    if N is None:
+        return DeterminantBasis(
+            1 << checked_n,
+            lambda: range(1 << checked_n),
+            f"n_orbitals={checked_n}",
+        )
+    checked_N = _validate_nonnegative_int(N, "N")
+    return DeterminantBasis(
+        _sector_size(checked_n, checked_N),
+        lambda: _iter_fixed_weight_determinants(checked_n, checked_N),
+        f"n_orbitals={checked_n}, N={checked_N}",
+    )
+
+
+def _is_unit_particle_charge(spec: Charge) -> bool:
+    return spec.modulus is None and all(value == 1 for value in spec.values)
+
+
+def _spin_orbital_partition(spec: Charge) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
+    if spec.modulus is not None:
+        return None
+    up_orbitals: list[int] = []
+    down_orbitals: list[int] = []
+    for orbital, value in enumerate(spec.values):
+        if value == 1:
+            up_orbitals.append(orbital)
+        elif value == -1:
+            down_orbitals.append(orbital)
+        else:
+            return None
+    return tuple(up_orbitals), tuple(down_orbitals)
+
+
+def _spin_resolved_basis_from_counts(
+    *,
+    n_orbitals: int,
+    up_orbitals: Sequence[int],
+    down_orbitals: Sequence[int],
+    n_up: int,
+    n_down: int,
+) -> Sequence[int]:
+    if n_up < 0 or n_down < 0:
+        return ()
+    return determinant_basis(
+        n_orbitals=n_orbitals,
+        spin_up_orbs=up_orbitals,
+        spin_down_orbs=down_orbitals,
+        N_up=n_up,
+        N_down=n_down,
+    )
+
+
+def _candidate_basis_for_charge_target(
+    n_orbitals: int,
+    specs: Mapping[str, Charge],
+    target: Mapping[str, int],
+) -> Sequence[int]:
+    if not target:
+        return determinant_basis(n_orbitals=n_orbitals)
+
+    n_target = target.get("N")
+    sz2_target = target.get("Sz2")
+    unit_particle_number = n_target is not None and _is_unit_particle_charge(specs["N"])
+    spin_partition = None
+    if sz2_target is not None:
+        spin_partition = _spin_orbital_partition(specs["Sz2"])
+
+    if (
+        unit_particle_number
+        and n_target is not None
+        and sz2_target is not None
+        and spin_partition is not None
+    ):
+        if n_target < 0:
+            return ()
+        n_up_times_two = n_target + sz2_target
+        n_down_times_two = n_target - sz2_target
+        if n_up_times_two % 2 != 0 or n_down_times_two % 2 != 0:
+            return ()
+        up_orbitals, down_orbitals = spin_partition
+        return _spin_resolved_basis_from_counts(
+            n_orbitals=n_orbitals,
+            up_orbitals=up_orbitals,
+            down_orbitals=down_orbitals,
+            n_up=n_up_times_two // 2,
+            n_down=n_down_times_two // 2,
+        )
+
+    if unit_particle_number and n_target is not None:
+        if n_target < 0:
+            return ()
+        return determinant_basis(n_orbitals=n_orbitals, N=n_target)
+
+    if spin_partition is not None and sz2_target is not None:
+        up_orbitals, down_orbitals = spin_partition
+        pieces: list[int] = []
+        for n_up in range(len(up_orbitals) + 1):
+            n_down = n_up - sz2_target
+            if 0 <= n_down <= len(down_orbitals):
+                pieces.extend(
+                    _spin_resolved_basis_from_counts(
+                        n_orbitals=n_orbitals,
+                        up_orbitals=up_orbitals,
+                        down_orbitals=down_orbitals,
+                        n_up=n_up,
+                        n_down=n_down,
+                    )
+                )
+        return tuple(sorted(pieces))
+
+    return determinant_basis(n_orbitals=n_orbitals)
+
+
 def basis_sector(
     n_orbitals: int,
     charges: Mapping[str, Any] | None = None,
@@ -1940,8 +2319,9 @@ def basis_sector(
         spin_z2=spin_z2,
         require_target=True,
     )
+    candidates = _candidate_basis_for_charge_target(checked_n, specs, target_map)
     out = []
-    for det in range(1 << checked_n):
+    for det in candidates:
         if _det_matches_charge_target(det, specs, target_map):
             out.append(det)
     return tuple(out)
