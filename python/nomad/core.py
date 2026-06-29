@@ -2023,7 +2023,13 @@ def _sector_size(n_orbitals: int, n_particles: int) -> int:
 
 @dataclass(frozen=True, eq=False)
 class DeterminantBasis(Sequence[int]):
-    """Lazy determinant sequence produced by :func:`determinant_basis`."""
+    """Lazy determinant sequence produced by :func:`determinant_basis`.
+
+    Like :class:`list`, this is an unhashable sequence.  ``__eq__`` compares
+    element-by-element against any sequence, so a consistent hash would have to
+    materialize the (potentially enormous) determinant list.  Call
+    :meth:`to_tuple` when a hashable snapshot is needed.
+    """
 
     _size: int
     _iter_factory: Callable[[], Iterable[int]] = field(repr=False)
@@ -2059,6 +2065,11 @@ class DeterminantBasis(Sequence[int]):
         if len(self) != len(other):
             return False
         return all(left == right for left, right in zip(self, other, strict=True))
+
+    # A content-based __eq__ has no cheap, consistent hash, so stay unhashable
+    # like list.  Defining __eq__ already sets this to None; make it explicit so
+    # the frozen dataclass does not read as an accidentally-hashable value type.
+    __hash__ = None  # type: ignore[assignment]
 
     def __repr__(self) -> str:  # pragma: no cover - convenience for REPLs
         return f"DeterminantBasis(size={self._size}, {self._description})"

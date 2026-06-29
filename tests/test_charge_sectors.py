@@ -90,6 +90,15 @@ def test_determinant_basis_spin_resolved_offset_block_stays_ascending():
     assert list(basis) == sorted(basis)
 
 
+def test_determinant_basis_is_unhashable_like_a_list():
+    # Content-based equality has no cheap consistent hash, so the lazy basis is
+    # unhashable like list; to_tuple() provides a hashable snapshot.
+    basis = determinant_basis(n_orbitals=4, N=2)
+    with pytest.raises(TypeError):
+        hash(basis)
+    assert hash(basis.to_tuple()) == hash((3, 5, 6, 9, 10, 12))
+
+
 # ---------------------------------------------------------------------------
 # basis_sector
 # ---------------------------------------------------------------------------
