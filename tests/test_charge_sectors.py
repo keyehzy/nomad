@@ -152,6 +152,18 @@ def test_term_charge_delta_omits_genuinely_unknown_charges():
     assert term_charge_delta(term, charges={"K": [0, 1, 2, 3]}) == {"N": 0}
 
 
+def test_term_charge_delta_treats_symbolic_n_as_unknown_under_nonuniform_table():
+    # A non-uniform per-orbital N table makes a lone symbolic index's particle
+    # number genuinely unknown (it depends on which orbital p expands to), so N
+    # is omitted just like any other symbolic charge -- but the same index on
+    # both ends still cancels structurally to a known ΔN = 0.
+    p = index("p")
+    assert term_charge_delta(adag(p).terms[0], charges={"N": [1, 1, 2, 2]}) == {}
+    assert term_charge_delta((adag(p) * a(p)).terms[0], charges={"N": [1, 1, 2, 2]}) == {"N": 0}
+    # The default (no N table) still reports the structural ΔN.
+    assert term_charge_delta(adag(p).terms[0]) == {"N": 1}
+
+
 def test_term_charge_delta_counts_particle_number_for_creation_word():
     assert term_charge_delta((adag(0) * adag(1)).terms[0]) == {"N": 2}
 
@@ -227,6 +239,15 @@ def test_prune_by_charge_conserves_modular_charge():
         expr, conserve=["K"], delta_n=None, charges={"K": charge([0, 1, 2, 3], modulus=4)}
     )
     assert text(kept) == "a†(0) a(0)"
+
+
+def test_prune_by_charge_keeps_symbolic_n_term_under_nonuniform_table():
+    # A non-uniform N table leaves a symbolic index's ΔN unknown, so a required
+    # non-zero ΔN must not prune a†(p) before expansion: orbitals with N == 2
+    # still qualify and are only resolved once p expands to concrete orbitals.
+    p = index("p")
+    kept = prune_by_charge(adag(p), delta={"N": 2}, delta_n=None, charges={"N": [1, 1, 2, 2]})
+    assert text(kept) == "a†(p)"
 
 
 # ---------------------------------------------------------------------------

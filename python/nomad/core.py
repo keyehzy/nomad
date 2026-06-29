@@ -1362,10 +1362,20 @@ def particle_delta(term: Term) -> int:
 
 def _mode_charge_value(mode: Mode, name: str, specs: Mapping[str, Charge]) -> int | None:
     if name == "N":
-        if isinstance(mode, Orbital) and name in specs:
-            return _orbital_charge_value(mode.value, name, specs[name])
+        if isinstance(mode, Orbital):
+            if name in specs:
+                return _orbital_charge_value(mode.value, name, specs[name])
+            return 1
         if isinstance(mode, Index):
-            return dict(_index_charge_items(mode)).get(name, 1)
+            items = dict(_index_charge_items(mode))
+            if name in items:
+                return items[name]
+            # Without an explicit per-orbital ``N`` table every mode carries one
+            # particle.  With a non-uniform table the symbolic index's particle
+            # number is genuinely unknown until it expands to a concrete orbital,
+            # so report it as such rather than assuming 1 (which would let
+            # ``prune_by_charge`` drop terms whose expansions still qualify).
+            return None if name in specs else 1
         return 1
     if isinstance(mode, Orbital):
         spec = specs.get(name)
