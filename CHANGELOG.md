@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- General additive charge sectors.  ``basis_sector`` now filters determinant
+  bases by arbitrary per-orbital charge tables, including optional modular
+  charges via ``charge(values, modulus=...)`` for momentum/parity-like labels.
+  ``generate_basis`` remains compatible with the legacy ``N``/``Sz2`` sectors,
+  while ``compile`` accepts ``charges=...`` and an optional precomputed
+  ``basis=...``.  Operators and terms expose known charge deltas through
+  ``operator_charge_delta``/``term_charge_delta``/``charge_delta``; generalized
+  ``prune_by_charge`` can prune terms that provably violate required
+  conservation laws before or after finite expansion.
 - Typed index domains via ``Domain``/``domain()`` and ``index``/``indices``
   ``domain=...`` arguments.  Finite expansion now uses domain-specific ranges
   or values, supports a per-call ``domains`` override (mapping a domain name to
